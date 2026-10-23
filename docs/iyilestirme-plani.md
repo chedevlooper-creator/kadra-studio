@@ -300,3 +300,25 @@ Mevcut 92 test domain mantığında güçlü. Eksikler:
 8. F15: teklif/karakter regresyon testleri.
 9. F21–F23: doküman ve artefakt düzeltmeleri.
 10. `npm run check` + Prettier.
+
+---
+
+## 9. Uygulama günlüğü
+
+### 2026-10-22 — Faz 0 (güvenlik ağı) tamamlandı
+
+| İş | Durum | Not |
+| :-- | :-- | :-- |
+| F1 — teklif geçersizleştirme | ✅ | `quoteFingerprint` karakter bankasını ve `frameModel`'i kapsıyor; karakter ekleme/düzenleme/silme, fotoğraf değiştirme ve sayfa onaylama/reddetme teklifi düşürüyor. Regresyon testi eklendi. |
+| F2 — harcama tavanı + kill switch | ✅ | `KADRA_MAX_SPEND_USD` ve `KADRA_KILL_SWITCH`; rezervasyon anında 402/403, gönderim anında son kapı. İki regresyon testi eklendi. |
+| F3 — yedekleme | ✅ | Günlük `.data/backups/projects-YYYY-MM-DD.json` (son 7) ve migration öncesi `projects.pre-vN.json`; iki test eklendi. |
+| F21 — rehber §16 | ✅ | TTS ve veritabanı satırları güncellendi. |
+| F22 — `next.config.ts` | ✅ | Gereksiz `serverExternalPackages` kaldırıldı. |
+| F23 — artefakt uzantısı | ✅ | `artifacts/kadra-flow-integration.jpg` olarak yeniden adlandırıldı. |
+| F24 — sürüm kontrolü | ✅ | `git init` + ilk commit (`b96b324`); `.env.local` sahne dışı. |
+| F27 — kontroller | ◐ | `npm run check` eklendi; Prettier/CI henüz yok. |
+
+Doğrulama: `npm run check` → typecheck ✅, lint ✅, 95/95 test ✅.
+
+Sonraki adım: **Faz 1** (F4 idempotency TTL, F5 iptal/hata medya temizliği, F14 çift ödeme kenarı, F10/F11 yükleme dayanıklılığı, F6 özet bootstrap).
+
