@@ -1,0 +1,158 @@
+{
+  "schema_version": "0.1-design-example",
+  "status": "draft_requires_validation",
+  "project": {
+    "title": "Dağın Hafızası",
+    "language": "tr",
+    "aspect_ratio": "16:9",
+    "target_duration_seconds": 24,
+    "export": {
+      "container": "mp4",
+      "width": 1920,
+      "height": 1080,
+      "fps": 24,
+      "source_resolution_must_be_recorded": true
+    },
+    "style": "Sinematik, illüstratif, sisli dağlar ve ölçülü kamera hareketi",
+    "budget": {
+      "currency": "USD",
+      "limit_microunits": null,
+      "requires_configuration_before_generation": true
+    },
+    "automation": {
+      "routing_profile": "balanced",
+      "storyboard_review": "optional_by_project_preference",
+      "max_additional_paid_variants_per_shot": 1,
+      "allow_meaning_changes": false,
+      "allow_still_image_motion_fallback": false,
+      "on_ambiguous_submission": "reconcile_without_new_generation"
+    }
+  },
+  "characters": [
+    {
+      "id": "traveler",
+      "description": "Koyu yeşil pelerinli yetişkin bir gezgin",
+      "reference_pack_id": null,
+      "reference_status": "needs_generation_or_upload"
+    }
+  ],
+  "reference_tasks": [
+    {
+      "id": "traveler_reference_pack",
+      "kind": "character_reference",
+      "character_id": "traveler",
+      "strategy": "generate_or_upload",
+      "completion_condition": "validated_reference_pack_is_ready",
+      "routing": {
+        "steps": [
+          {
+            "id": "traveler_reference_image",
+            "required_capabilities": ["text_to_image"],
+            "provider_id": null,
+            "model_snapshot_id": null
+          }
+        ]
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "id": "scene_01",
+      "source_excerpt": "Sisli dağların eteklerinde bir gezgin yürür. Başını kaldırıp zirvedeki ışığı görür.",
+      "narrative_goal": "Mekânı ve gezginin hedefini kurmak",
+      "shots": [
+        {
+          "id": "shot_01",
+          "target_duration_seconds": 8,
+          "character_ids": ["traveler"],
+          "camera": "Geniş plan, yavaş ileri hareket",
+          "action": "Gezgin sisli patikada zirveye doğru yürür",
+          "strategy": "reference_image_then_image_to_video",
+          "required_elements": ["koyu yeşil pelerin", "sisli dağ patikası"],
+          "forbidden_elements": ["ekranda yazı", "logo"],
+          "reference_asset_ids": [],
+          "depends_on": ["traveler_reference_pack"],
+          "routing": {
+            "steps": [
+              {
+                "id": "shot_01_keyframe",
+                "required_capabilities": ["text_to_image", "image_reference"],
+                "provider_id": null,
+                "model_snapshot_id": null
+              },
+              {
+                "id": "shot_01_motion",
+                "depends_on": ["shot_01_keyframe"],
+                "required_capabilities": ["image_to_video"],
+                "provider_id": null,
+                "model_snapshot_id": null
+              }
+            ],
+            "decision_reason": "Model seçimi erişim ve değerlendirme sonrasında yapılır"
+          }
+        },
+        {
+          "id": "shot_02",
+          "target_duration_seconds": 8,
+          "character_ids": ["traveler"],
+          "camera": "Orta plan, başını kaldıran gezgin",
+          "action": "Gezgin zirvedeki yumuşak ışığı fark eder",
+          "strategy": "reference_image_then_image_to_video",
+          "required_elements": ["aynı kıyafet ve görünüm", "zirvede yumuşak ışık"],
+          "forbidden_elements": ["ekranda yazı", "logo"],
+          "reference_asset_ids": [],
+          "depends_on": ["traveler_reference_pack"],
+          "routing": {
+            "steps": [
+              {
+                "id": "shot_02_keyframe",
+                "required_capabilities": ["text_to_image", "image_reference"],
+                "provider_id": null,
+                "model_snapshot_id": null
+              },
+              {
+                "id": "shot_02_motion",
+                "depends_on": ["shot_02_keyframe"],
+                "required_capabilities": ["image_to_video"],
+                "provider_id": null,
+                "model_snapshot_id": null
+              }
+            ],
+            "decision_reason": "Desteklenen klip süreleri çekim veya trim planını etkileyebilir"
+          }
+        }
+      ]
+    },
+    {
+      "id": "scene_02",
+      "source_excerpt": "Siyah ekranda Yol, hatırlamakla başlar yazısı belirir.",
+      "narrative_goal": "Kapanış cümlesini eksiksiz göstermek",
+      "shots": [
+        {
+          "id": "shot_03",
+          "target_duration_seconds": 8,
+          "character_ids": [],
+          "strategy": "deterministic_title_card",
+          "text": "Yol, hatırlamakla başlar.",
+          "background": "#000000",
+          "text_color": "#F2EEE6",
+          "transition": "cut",
+          "depends_on": []
+        }
+      ]
+    }
+  ],
+  "audio": {
+    "narration": {
+      "enabled": false,
+      "provider_connection_id": null,
+      "text": null
+    },
+    "music_asset_id": null
+  },
+  "timeline": {
+    "shot_order": ["shot_01", "shot_02", "shot_03"],
+    "default_transition": "cut",
+    "duration_note": "Kesme geçişiyle nominal toplam 24 saniye. Gerçek klip süreleri montajdan önce doğrulanır."
+  }
+}

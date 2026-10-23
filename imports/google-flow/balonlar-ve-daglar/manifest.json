@@ -1,0 +1,61 @@
+{
+  "source": "https://flow.google.com/project/ceb12a17-2b58-4a57-9585-5e2f5221cf62/tool/9aa3b8dc-5673-4c39-af9a-c5326b2ceaa9?mode=EDIT",
+  "capturedAt": "2026-10-23T04:45:08.283Z",
+  "method": "Safari visible code tab, full text selection, sequential line numbers removed; blank source lines preserved",
+  "files": [
+    {
+      "path": "App.tsx",
+      "lines": 876,
+      "bytes": 34402,
+      "sha256": "267e725497a693355badb9258a32cd52f0a8079500e0addb05c71d14a51a6517"
+    },
+    {
+      "path": "components/AutoPipelineBar.tsx",
+      "lines": 228,
+      "bytes": 10479,
+      "sha256": "cd9930d0792c6e874f3f8205962f75f0a5313499a4709820ac2a165aed31fafe"
+    },
+    {
+      "path": "components/CharacterSheetModal.tsx",
+      "lines": 424,
+      "bytes": 20415,
+      "sha256": "948b158234f4c52a9df0955179e4cd2f4afb605fba6fbf218800578f72e814cd"
+    },
+    {
+      "path": "components/MusicDirectorView.tsx",
+      "lines": 148,
+      "bytes": 7379,
+      "sha256": "a0473ce051e1764105e004f555eb6617bd7715fd2312cf648ecf5d779c3696c4"
+    },
+    {
+      "path": "components/ShotCard.tsx",
+      "lines": 327,
+      "bytes": 14286,
+      "sha256": "abac43719ba76ac996b0a8a26e5d93e0312f9050c3fd6000834f12dd4f9a4dcd"
+    },
+    {
+      "path": "components/ShotDetailModal.tsx",
+      "lines": 503,
+      "bytes": 23983,
+      "sha256": "54a85e2e468702b51ad635baad02ef4ba732b330cee6332e798dab4b164ee5c9"
+    },
+    {
+      "path": "components/VoiceoverStudio.tsx",
+      "lines": 141,
+      "bytes": 6405,
+      "sha256": "eca9e43a2414c0a78ec9d9acc3dbe561149daae35e49b4962e10db0896f31b41"
+    },
+    {
+      "path": "constants.ts",
+      "lines": 526,
+      "bytes": 41295,
+      "sha256": "ec732ef91c8ae7c7b01a6c6048597a4e14608d7b4ce799f17b9d0e3e151bece3"
+    },
+    {
+      "path": "types.ts",
+      "lines": 67,
+      "bytes": 1829,
+      "sha256": "19e6046242982185d875e5adb6ab5716a47966ab782524142a78e66225563d8f"
+    }
+  ]
+}
