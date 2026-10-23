@@ -31,7 +31,6 @@ test("initial references and projects survive repository recreation", async (t) 
   assert.deepEqual(new Set(bootstrap.projects.map((project) => project.title)), new Set(["Dağın Hafızası", "Son Işık", "Başka Bir Dünya"]));
   assert.ok(bootstrap.projects.every((project) => project.isExample && project.scenes.length > 0 && project.output === null));
   assert.ok(bootstrap.models.filter((model) => model.provider === "NVIDIA").every((model) => !model.configured));
-  assert.ok(bootstrap.models.find((model) => model.provider === "FFmpeg")?.configured);
   assert.equal(bootstrap.providers.nvidia, false);
   const project = await repository.createProject(input);
   assert.equal((await createProjectRepository(directory).getProject(project.id)).title, "Deneme");
@@ -167,7 +166,7 @@ test("version 1 data with simulated demo runs migrates without losing projects",
   const migrated = await createProjectRepository(directory).getProject(planned.id);
   assert.equal(migrated.run, null);
   assert.equal(migrated.status, "planned");
-  assert.equal(migrated.scenes[1].model, "FFmpeg yazı kartı");
+  assert.equal(migrated.scenes[1].model, "Yazı kartı");
   assert.ok(migrated.scenes.every((scene) => scene.imageSource === "reference" && scene.status === "draft"));
   const stored = JSON.parse(await readFile(file, "utf8"));
   assert.equal(stored.version, 2);

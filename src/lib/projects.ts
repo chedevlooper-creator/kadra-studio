@@ -118,6 +118,8 @@ export interface RepositoryOptions {
   spendLimit?: () => number | null;
   /** Emergency stop: while true, no paid request may be reserved or sent. */
   paymentsDisabled?: () => boolean;
+  /** Paid-only product mode: every visual asset is made by a paid provider; free generation is refused. */
+  paidOnly?: boolean;
 }
 
 export interface RepairInput {
@@ -129,14 +131,15 @@ export interface RepairInput {
 
 export interface CharacterInput { name: string; appearance: string; aliases: string[]; style: string; kind?: Character["kind"] }
 
-/** Reference photos go to the paid reference model; characters without one are drawn free from their description unless paid is chosen. */
-export function estimateCharacters(project: Pick<Project, "characters" | "budget" | "ledger">, characterIds: string[], providers: ProviderStatus, unitPrice: number | null, engineOverride: "auto" | "nano-banana" = "auto"): CharacterEstimate {
+/** Every sheet is drawn by the paid reference model. In paid-only mode even description-only characters are paid. */
+export function estimateCharacters(project: Pick<Project, "characters" | "budget" | "ledger">, characterIds: string[], providers: ProviderStatus, unitPrice: number | null, engineOverride: "auto" | "nano-banana" = "auto", paidOnly = false): CharacterEstimate {
+  const engine = paidOnly ? "nano-banana" : engineOverride;
   const problems: string[] = [];
   const lines: CharacterEstimate["lines"] = [];
   for (const id of characterIds) {
     const character = project.characters.find((item) => item.id === id);
     if (!character) { problems.push(`Karakter bulunamadı: ${id}`); continue; }
-    if (character.reference || engineOverride === "nano-banana") {
+    if (character.reference || engine === "nano-banana") {
       if (!providers.gmi) problems.push(`${character.name}: ${character.reference ? "referans fotoğraflı" : "Nano Banana 2.1 ile"} üretim için GMI anahtarı gerekli.`);
       else if (unitPrice === null) problems.push(`${character.name}: GMI'dan güncel fiyat alınamadı.`);
       else lines.push({ characterId: id, name: character.name, engine: "nano-banana", unitCost: unitPrice, maxAttempts: SHEET_ATTEMPTS, maxCost: money(unitPrice * SHEET_ATTEMPTS) });
@@ -334,7 +337,12 @@ function withoutOwner({ ...step }: StoredStep): RunStep {
 
 /** The browser never sees lease owners. */
 function publicProject(project: StoredProject): Project {
-  return project.run ? { ...project, run: { ...project.run, steps: project.run.steps.map(withoutOwner) } } : (project as Project);
+  const scenes = project.scenes.map((scene) => ({
+    ...scene,
+    model: scene.model === "FLUX.2 Klein + FFmpeg hareket" ? VIDEO_MODEL : scene.model === "FFmpeg yazı kartı" ? TITLE_MODEL : scene.model,
+    modelReason: scene.modelReason?.replace(/ ve FFmpeg kamera hareketiyle klibe dönüştürülür/g, "")?.replace(/FFmpeg ile /g, "") ?? scene.modelReason,
+  }));
+  return project.run ? { ...project, scenes, run: { ...project.run, steps: project.run.steps.map(withoutOwner) } } : ({ ...project, scenes } as Project);
 }
 
 function ownerAlive(owner: string | null): boolean {
@@ -365,6 +373,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
   const providers = options.providers ?? (async () => NO_PROVIDERS);
   const spendLimit = options.spendLimit ?? (() => null);
   const paymentsDisabled = options.paymentsDisabled ?? (() => false);
+  const paidOnly = options.paidOnly ?? false;
   const backupsDirectory = path.join(directory, "backups");
   const KEEP_BACKUPS = 7;
 
@@ -586,6 +595,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       return transaction((database) => {
         const project = find(database, id); checkRevision(project, revision); requireIdle(project);
         Object.assign(project, plan);
+        if (paidOnly) project.scenes.forEach((scene) => { if (scene.kind === "video") scene.motion = "ai"; });
         project.duration = project.scenes.reduce((sum, scene) => sum + scene.duration, 0); project.status = "planned"; project.run = null;
         touch(project, new Date().toISOString()); return publicProject(project);
       });
@@ -593,11 +603,11 @@ export function createProjectRepository(directory: string, options: RepositoryOp
     updateScene: (id: string, sceneId: string, revision: number, input: ScenePatch): Promise<Project> => transaction((database) => {
       const patch = parseInput(scenePatchSchema, input); const project = find(database, id); checkRevision(project, revision); requireIdle(project); parseInput(idSchema, sceneId);
       const scene = project.scenes.find((item) => item.id === sceneId); if (!scene) throw new AppError(404, "Çekim bulunamadı.");
-      if (patch.model && ![VIDEO_MODEL, TITLE_MODEL].includes(patch.model)) throw new AppError(400, "Katalogdaki bir üretim yöntemini seçin.");
+      if (patch.model && ![VIDEO_MODEL, TITLE_MODEL, "FLUX.2 Klein + FFmpeg hareket", "FFmpeg yazı kartı"].includes(patch.model)) throw new AppError(400, "Katalogdaki bir üretim yöntemini seçin.");
       if (patch.characterIds?.some((characterId) => !project.characters.some((character) => character.id === characterId))) throw new AppError(400, "Çekime yalnızca projedeki karakterler bağlanabilir.");
       const frameChanged = (patch.prompt !== undefined && patch.prompt !== scene.prompt) || (patch.description !== undefined && patch.description !== scene.description);
       Object.assign(scene, patch);
-      if (patch.kind) { scene.model = patch.kind === "title" ? TITLE_MODEL : VIDEO_MODEL; }
+      if (patch.kind || scene.model === "FLUX.2 Klein + FFmpeg hareket" || scene.model === "FFmpeg yazı kartı") { scene.model = (patch.kind ?? scene.kind) === "title" ? TITLE_MODEL : VIDEO_MODEL; }
       if (frameChanged && scene.imageSource === "generated") { scene.imageSource = "reference"; scene.review = null; scene.repair = null; }
       project.scenes.forEach((item) => { item.status = "draft"; }); project.run = null; project.status = "planned"; project.duration = project.scenes.reduce((sum, item) => sum + item.duration, 0); touch(project, new Date().toISOString()); return publicProject(project);
     }),
@@ -611,6 +621,8 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       if (quoteId !== null) parseInput(idSchema, quoteId);
       const status = await providers();
       const target = options.target ?? "film";
+      if (paidOnly && !quoteId) throw new AppError(400, "Ücretsiz üretim kaldırıldı. Üretim için fiyat teklifi alıp onaylayın.");
+      if (paidOnly && target === "frames") throw new AppError(400, "Ücretli akışta kareler ve videolar tek teklifte üretilir; ayrı kare aşaması yok.");
       if (target === "frames" && quoteId) throw new AppError(400, "Kare aşaması ücretli video teklifiyle başlatılamaz.");
       return transaction((database) => {
         const project = find(database, id); const fingerprint = JSON.stringify({ mode: quoteId ? "paid" : "free", revision, quoteId, ...options });
@@ -636,6 +648,10 @@ export function createProjectRepository(directory: string, options: RepositoryOp
           paidImageLines = new Map(quote.lines.filter((line) => line.kind === "image").map((line) => [line.sceneId, line]));
           paidVideoLines = new Map(quote.lines.filter((line) => (line.kind ?? "video") === "video").map((line) => [line.sceneId, line]));
           paidVoiceLines = new Map(quote.lines.filter((line) => line.kind === "voice").map((line) => [line.sceneId, line]));
+          if (paidOnly) {
+            const missing = project.scenes.filter((scene) => scene.kind === "video" && (!paidImageLines.has(scene.id) || !paidVideoLines.has(scene.id)));
+            if (missing.length) throw new AppError(409, `${missing.length} çekimin kare veya videosu teklifte yok. Yeni bir teklif alın.`);
+          }
           assertPaymentsAllowed();
           assertSpendLimit(database, money([...paidImageLines.values(), ...paidVideoLines.values(), ...paidVoiceLines.values()].reduce((sum, line) => sum + line.estimate, 0)));
         }
@@ -681,10 +697,10 @@ export function createProjectRepository(directory: string, options: RepositoryOp
         }
         const paidTotal = money([...paidImageLines.values(), ...paidVideoLines.values(), ...paidVoiceLines.values()].reduce((sum, line) => sum + line.estimate, 0));
         const message = quoteId
-          ? `Üretim başladı.${paidImageLines.size ? ` ${paidImageLines.size} çekim karesi onaylı karakter sayfalarıyla Nano Banana 2.1 üzerinden üretilecek.` : ""}${paidVideoLines.size ? ` ${paidVideoLines.size} çekim GMI ile yapay zekâ videosuna dönüşecek.` : ""}${paidVoiceLines.size ? ` ${paidVoiceLines.size} çekimin dış sesi ${VOICE_LABEL} ile seslendirilecek.` : ""} Tahmini ${paidTotal.toFixed(2)} $ bütçeden ayrıldı.`
+          ? `Üretim başladı.${paidImageLines.size ? ` ${paidImageLines.size} çekim karesi GMI görsel modeli üzerinden üretilecek.` : ""}${paidVideoLines.size ? ` ${paidVideoLines.size} çekim GMI ile yapay zekâ videosuna dönüşecek.` : ""}${paidVoiceLines.size ? ` ${paidVoiceLines.size} çekimin dış sesi ${VOICE_LABEL} ile seslendirilecek.` : ""} Tahmini ${paidTotal.toFixed(2)} $ bütçeden ayrıldı.`
           : status.nvidia
-            ? "Ücretsiz üretim başladı. Görseller NVIDIA FLUX.2 Klein ile üretilip Nemotron VL ile kontrol edilecek; FFmpeg kamera hareketini ve montajı yapacak. Ücretli istek gönderilmez."
-            : "Ücretsiz üretim başladı. NVIDIA anahtarı olmadığı için çekimlerde mevcut referans görseller kullanılacak; FFmpeg hareketi ve montajı yapacak.";
+            ? "Ücretsiz üretim başladı. Görseller NVIDIA FLUX.2 Klein ile üretilip Nemotron VL ile kontrol edilecek ve tek filmde birleştirilecek. Ücretli istek gönderilmez."
+            : "Ücretsiz üretim başladı. NVIDIA anahtarı olmadığı için çekimlerde mevcut referans görseller kullanılacak ve tek filmde birleştirilecek.";
         const run = { id: runId, mode: quoteId ? "paid" as const : "free" as const, regenerateImages: Boolean(options.regenerate) && !quoteId, keepFlagged: Boolean(quoteId) || Boolean(options.reuseImages), target, prepareCharacters: options.prepareCharacters ?? false, status: "running" as const, startedAt: now, completedAt: null, progress: 0, cost: paidTotal, steps, events: [makeEvent(message, "info", now)] };
         project.run = run; project.quote = null; project.status = "producing"; project.scenes.forEach((scene) => { scene.status = "queued"; }); touch(project, now);
         database.receipts.push({ projectId: id, key, fingerprint, runId: run.id }); return publicProject(project);
@@ -857,6 +873,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       project.scenes.forEach((scene) => { scene.characterIds = project.characters.filter((character) => mentionsCharacter(scene, character)).map((character) => character.id); });
       project.planner = "import";
       project.planNote = "";
+      if (paidOnly) project.scenes.forEach((scene) => { if (scene.kind === "video") scene.motion = "ai"; });
       project.description = `${input.shots.length} çekimlik storyboard içe aktarıldı.`;
       project.duration = project.scenes.reduce((sum, scene) => sum + scene.duration, 0);
       project.status = "planned";
@@ -924,22 +941,24 @@ export function createProjectRepository(directory: string, options: RepositoryOp
     estimateCharacterRun: async (id: string, characterIds: string[], runOptions: { engine?: "auto" | "nano-banana"; budget?: number } = {}): Promise<CharacterEstimate> => {
       const project = await transaction((database) => publicProject(find(database, id)));
       const status = await providers();
-      const needsPrice = status.gmi && (runOptions.engine === "nano-banana" || characterIds.some((characterId) => project.characters.find((character) => character.id === characterId)?.reference));
+      const engine = paidOnly ? "nano-banana" : runOptions.engine ?? "auto";
+      const needsPrice = status.gmi && (engine === "nano-banana" || characterIds.some((characterId) => project.characters.find((character) => character.id === characterId)?.reference));
       const price = needsPrice && options.referenceImagePrice ? await options.referenceImagePrice().catch(() => null) : null;
-      return estimateCharacters(runOptions.budget !== undefined ? { ...project, budget: runOptions.budget } : project, characterIds, status, price, runOptions.engine ?? "auto");
+      return estimateCharacters(runOptions.budget !== undefined ? { ...project, budget: runOptions.budget } : project, characterIds, status, price, engine, paidOnly);
     },
     /** Starts sheet generation; paid attempts are reserved at their maximum and the unused part is returned at the end. */
     startCharacterRun: async (id: string, revision: number, key: string, characterIds: string[], maxCost: number, runOptions: { engine?: "auto" | "nano-banana"; budget?: number } = {}): Promise<Project> => {
       parseInput(idempotencySchema, key); parseInput(revisionSchema, revision);
       const status = await providers();
       const preview = await transaction((database) => publicProject(find(database, id)));
-      const needsPrice = status.gmi && (runOptions.engine === "nano-banana" || characterIds.some((characterId) => preview.characters.find((character) => character.id === characterId)?.reference));
+      const engine = paidOnly ? "nano-banana" : runOptions.engine ?? "auto";
+      const needsPrice = status.gmi && (engine === "nano-banana" || characterIds.some((characterId) => preview.characters.find((character) => character.id === characterId)?.reference));
       const price = needsPrice && options.referenceImagePrice ? await options.referenceImagePrice().catch(() => null) : null;
       // A rejected sheet whose defects are located is repaired in place, never for more than a fresh attempt would cost.
       const repairPrice = needsPrice && options.repairPrice ? await options.repairPrice().catch(() => null) : null;
       return transaction((database) => {
         const project = find(database, id);
-        const fingerprint = JSON.stringify({ mode: "characters", revision, characterIds, engine: runOptions.engine ?? "auto" });
+        const fingerprint = JSON.stringify({ mode: "characters", revision, characterIds, engine });
         const receipt = database.receipts.find((item) => item.projectId === id && item.key === key);
         if (receipt) {
           if (receipt.fingerprint !== fingerprint || project.run?.id !== receipt.runId) throw new AppError(409, "Bu işlem anahtarı daha önce başka bir istekte kullanıldı. Yeni bir anahtar oluşturun.");
@@ -947,7 +966,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
         }
         checkRevision(project, revision); requireIdle(project);
         if (runOptions.budget !== undefined) project.budget = runOptions.budget;
-        const estimate = estimateCharacters(project, characterIds, status, price, runOptions.engine ?? "auto");
+        const estimate = estimateCharacters(project, characterIds, status, price, engine, paidOnly);
         if (!estimate.withinBudget) throw new AppError(400, estimate.problems.join(" ") || "Üretilecek karakter seçin.");
         if (estimate.total > maxCost + 0.0001) throw new AppError(409, `Fiyat değişti: en yüksek tutar artık ${estimate.total.toFixed(2)} $. Tahmini yenileyip tekrar onaylayın.`);
         if (estimate.total > 0) { assertPaymentsAllowed(); assertSpendLimit(database, estimate.total); }
@@ -1083,18 +1102,19 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       parseInput(revisionSchema, input.revision);
       if (input.budget !== null && (!Number.isFinite(input.budget) || input.budget < 0 || input.budget > 100_000)) throw new AppError(400, "Bütçe 0 ile 100.000 USD arasında olmalı.");
       const narration = await transaction((database) => { const project = find(database, id); checkRevision(project, input.revision); requireIdle(project); return project.narration; });
-      const wantsVideo = input.selections.some((selection) => selection.motion === "ai");
+      const referenceFrames = paidOnly || Boolean(input.referenceFrames);
+      const wantsVideo = paidOnly || input.selections.some((selection) => selection.motion === "ai");
       const wantsVoice = narration.engine === "gmi";
-      if (!(await providers()).gmi || (wantsVideo && !options.videoPrices) || (!wantsVideo && !input.referenceFrames && !wantsVoice && !options.videoPrices)) throw new AppError(400, "GMI anahtarı tanımlı değil; ücretli video için teklif alınamaz.");
+      if (!(await providers()).gmi || (wantsVideo && !options.videoPrices) || (!wantsVideo && !referenceFrames && !wantsVoice && !options.videoPrices)) throw new AppError(400, "GMI anahtarı tanımlı değil; ücretli video için teklif alınamaz.");
       const voicePrice = wantsVoice && options.voicePrice ? await options.voicePrice().catch(() => null) : null;
       let prices: ReadonlyMap<string, PriceRule> = new Map();
-      if (options.videoPrices && (wantsVideo || !input.referenceFrames)) {
+      if (options.videoPrices && (wantsVideo || !referenceFrames)) {
         try { prices = await options.videoPrices(); }
         catch (error) { throw new AppError(502, `GMI'dan güncel fiyatlar alınamadı; teklif verilmedi. ${error instanceof Error ? error.message : ""}`.trim()); }
       }
       // Without the frame router's live prices, Nano Banana 2.1 (the character-sheet model) is the only frame model offered.
       let framePrices: ReadonlyMap<string, number> | null = null;
-      if (input.referenceFrames) {
+      if (referenceFrames) {
         if (options.framePrices) framePrices = await options.framePrices().catch(() => null);
         else if (options.referenceImagePrice) { const price = await options.referenceImagePrice().catch(() => null); framePrices = price === null ? null : new Map([[REFERENCE_MODEL, price]]); }
       }
@@ -1103,15 +1123,17 @@ export function createProjectRepository(directory: string, options: RepositoryOp
         const choices = new Map(input.selections.map((selection) => [selection.sceneId, selection]));
         for (const scene of project.scenes) {
           const choice = choices.get(scene.id);
-          if (!choice || scene.kind !== "video") continue;
-          scene.motion = choice.motion;
-          scene.videoModel = choice.motion === "ai" ? choice.videoModel : null;
+          if (scene.kind !== "video") continue;
+          const motion = paidOnly ? "ai" : choice?.motion;
+          if (!motion) continue;
+          scene.motion = motion;
+          scene.videoModel = motion === "ai" ? choice?.videoModel ?? null : null;
         }
         project.quality = input.quality;
         project.budget = input.budget;
         if (input.frameModel !== undefined) project.frameModel = input.frameModel;
         const media = projectMediaDirectory(mediaDirectory, project.id);
-        project.quote = buildQuote(project, prices, new Date(), input.referenceFrames ? { enabled: true, prices: framePrices, override: project.frameModel } : undefined, (file) => existsSync(path.join(media, file)), voicePrice);
+        project.quote = buildQuote(project, prices, new Date(), referenceFrames ? { enabled: true, prices: framePrices, override: project.frameModel } : undefined, (file) => existsSync(path.join(media, file)), voicePrice);
         touch(project, new Date().toISOString());
         return publicProject(project);
       });

@@ -98,19 +98,18 @@ function zoompan(motion: Motion, frames: number): { z: string; x: string; y: str
 
 const ENCODE = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-r", String(FPS)];
 
-export async function renderImageClip({ image, output, duration, aspectRatio, camera }: { image: string; output: string; duration: number; aspectRatio: AspectRatio; camera: string }): Promise<void> {
+export async function renderImageClip({ image, output, duration, aspectRatio }: { image: string; output: string; duration: number; aspectRatio: AspectRatio; camera?: string }): Promise<void> {
   const { width, height } = outputSize(aspectRatio);
   const frames = Math.round(duration * FPS);
-  const move = zoompan(cameraMotion(camera), frames);
-  // Upscaling before zoompan avoids the integer-pixel jitter of slow Ken Burns moves.
   const filter = [
-    `scale=${width * 3}:${height * 3}:force_original_aspect_ratio=increase:flags=lanczos`,
-    `crop=${width * 3}:${height * 3}`,
-    `zoompan=z='${move.z}':x='${move.x}':y='${move.y}':d=${frames}:s=${width}x${height}:fps=${FPS}`,
+    `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos`,
+    `crop=${width}:${height}`,
+    "setsar=1",
+    `fps=${FPS}`,
     `fade=t=in:st=0:d=${FADE}`, `fade=t=out:st=${(duration - FADE).toFixed(2)}:d=${FADE}`, "format=yuv420p",
   ].join(",");
   await mkdir(path.dirname(output), { recursive: true });
-  await ffmpeg(["-i", image, "-vf", filter, "-frames:v", String(frames), ...ENCODE, "-an", output], path.dirname(output));
+  await ffmpeg(["-loop", "1", "-i", image, "-vf", filter, "-frames:v", String(frames), ...ENCODE, "-an", output], path.dirname(output));
 }
 
 /** Fits a provider's clip to the film: same size and frame rate, exact shot length (holding the last frame if short). */

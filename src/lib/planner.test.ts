@@ -31,8 +31,8 @@ test("heuristic planner marks reference images and picks the free production met
   assert.equal(scenes[1].kind, "title");
   assert.equal(scenes[0].image, "/images/mountains.jpg");
   assert.ok(scenes.every((scene) => scene.status === "draft" && scene.imageSource === "reference" && scene.notes.some((note) => note.includes("dil modeli kullanılmadı"))));
-  assert.equal(scenes[0].model, "FLUX.2 Klein + FFmpeg hareket");
-  assert.equal(scenes[1].model, "FFmpeg yazı kartı");
+  assert.equal(scenes[0].model, "FLUX.2 Klein");
+  assert.equal(scenes[1].model, "Yazı kartı");
   assert.match(scenes[1].modelReason, /eksiksiz/);
 });
 

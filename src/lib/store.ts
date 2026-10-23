@@ -26,5 +26,5 @@ function paymentsDisabled(): boolean {
 }
 
 /** The application's single local store; tests build their own repositories instead. */
-export const repository = createProjectRepository(process.env.KADRA_DATA_DIR || path.join(process.cwd(), ".data"), { providers: providerStatus, aiPlanner, videoPrices: loadVideoPrices, referenceImagePrice: loadReferenceImagePrice, repairPrice: loadRepairPrice, framePrices: loadFramePrices, voicePrice: loadVoicePrice, spendLimit, paymentsDisabled });
+export const repository = createProjectRepository(process.env.KADRA_DATA_DIR || path.join(process.cwd(), ".data"), { providers: providerStatus, aiPlanner, videoPrices: loadVideoPrices, referenceImagePrice: loadReferenceImagePrice, repairPrice: loadRepairPrice, framePrices: loadFramePrices, voicePrice: loadVoicePrice, spendLimit, paymentsDisabled, paidOnly: true });
 export const publicDirectory = path.join(process.cwd(), "public");

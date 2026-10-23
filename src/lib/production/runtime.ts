@@ -15,6 +15,7 @@ export function ensureProductionWorker(): Worker | null {
     registry[KEY] = createProductionWorker({
       repository,
       publicDirectory,
+      paidOnly: true,
       imageEngine: () => {
         if (!nvidiaConfigured()) return null;
         return {

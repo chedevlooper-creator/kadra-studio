@@ -3,10 +3,10 @@ import type { AiPlan } from "./providers/nvidia";
 import type { Character, ModelProfile, ProviderStatus, Scene } from "./types";
 import { AppError } from "./validation";
 
-export const VIDEO_MODEL = "FLUX.2 Klein + FFmpeg hareket";
-export const TITLE_MODEL = "FFmpeg yazı kartı";
-const VIDEO_REASON = "Başlangıç karesi NVIDIA FLUX.2 Klein ile ücretsiz üretilir, Nemotron VL ile kontrol edilir ve FFmpeg kamera hareketiyle klibe dönüştürülür. NVIDIA anahtarı yoksa referans görsel kullanılır.";
-const TITLE_REASON = "Yazı kartı FFmpeg ile metin olarak çizilir; yapay zekâ metni değiştirmez, harfler eksiksiz görünür.";
+export const VIDEO_MODEL = "FLUX.2 Klein";
+export const TITLE_MODEL = "Yazı kartı";
+const VIDEO_REASON = "Başlangıç karesi NVIDIA FLUX.2 Klein veya GMI Cloud ile üretilir ve Nemotron VL / DeepSeek ile kontrol edilir. Yapay zekâ videosu GMI Cloud modelleriyle üretilir.";
+const TITLE_REASON = "Yazı kartı doğrudan metin olarak çizilir; yapay zekâ metni değiştirmez, harfler eksiksiz görünür.";
 
 export function modelCatalog(providers: ProviderStatus): ModelProfile[] {
   return [
@@ -15,7 +15,6 @@ export function modelCatalog(providers: ProviderStatus): ModelProfile[] {
     { id: "flux2-klein", name: "FLUX.2 Klein", provider: "NVIDIA", type: "image", description: "Her çekimin başlangıç karesini birkaç saniyede üretir. Karakter görünüşü her promptta tekrarlanır.", tags: ["Görsel", "Hızlı", "Ücretsiz katman"], configured: providers.nvidia, free: true },
     { id: "nemotron-vl", name: "Nemotron 3.5 Super VL", provider: "NVIDIA", type: "review", description: "Üretilen kareyi çekim açıklamasıyla karşılaştırır; uyumsuz ya da bozuksa bir kez yeniden ürettirir. Yoğunlukta Nemotron 3 Nano Omni devreye girer.", tags: ["Kalite kontrolü", "Görsel anlama", "Ücretsiz katman"], configured: providers.nvidia, free: true },
     { id: "gmi-nano-banana", name: "Gemini Nano Banana 2.1", provider: "GMI", type: "image", description: "Referans fotoğraflardan karakter sayfası ve onaylı karakter sayfalarından sahne karesi üretir.", tags: ["Referans görsel", "Karakter sayfası", "Ücretli"], configured: providers.gmi, free: false },
-    { id: "ffmpeg-motion", name: "FFmpeg hareket ve montaj", provider: "FFmpeg", type: "graphics", description: "Karelere kamera hareketi verir, yazı kartlarını çizer ve tüm çekimleri MP4 olarak birleştirir. Bu bilgisayarda çalışır.", tags: ["Kamera hareketi", "Yazı kartı", "Montaj"], configured: providers.ffmpeg, free: true },
     { id: "gmi-video", name: "GMI video yönlendirici", provider: "GMI", type: "video", description: "Seçtiğin çekimleri gerçek yapay zekâ videosuna çevirir. Kalite seviyene uyan modeller (Veo 3.1 Lite, Hailuo, Seedance, Wan, Kling, Veo 3.1 Fast) arasından canlı fiyata göre en ucuzunu seçer; teklifi onaylamadan ücret oluşmaz.", tags: ["Video", "Ücretli", "Onaylı teklif"], configured: providers.gmi, free: false },
   ];
 }

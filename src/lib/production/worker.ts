@@ -47,6 +47,8 @@ export interface WorkerOptions {
   sheetTimeoutMs?: number;
   pollIntervalMs?: number;
   videoTimeoutMs?: number;
+  /** Paid-only product mode: a failed paid job stops the run instead of falling back to a free render. */
+  paidOnly?: boolean;
   log?: (message: string) => void;
 }
 
@@ -76,6 +78,7 @@ export function createProductionWorker(options: WorkerOptions) {
   const owner = `${process.pid}:${randomUUID()}`;
   const mediaRoot = options.repository.mediaDirectory;
   const log = options.log ?? ((message: string) => console.warn(message));
+  const paidOnly = options.paidOnly ?? false;
   const clipsDirectory = (projectId: string) => path.join(projectMediaDirectory(mediaRoot, projectId), "clips");
 
   async function review(engine: ImageEngine | null, image: Buffer, expectation: string, characterSheets: { name: string; image: Buffer }[] = []): Promise<ImageReview | null> {
@@ -170,6 +173,8 @@ export function createProductionWorker(options: WorkerOptions) {
       const spec = frameModel(paid.model) ?? frameModel(REFERENCE_MODEL)!;
       const gmi = options.videoEngine?.() ?? null;
       const fallbackFrame = async (reason: string, ledger: { status: "failed" | "released"; note: string }): Promise<StepResult> => {
+        // Paid-only mode never substitutes a free frame: the run fails and the user decides.
+        if (paidOnly) throw new AppError(503, `${reason} Ücretli kare üretilemedi; üretim durduruldu.`);
         if (scene.imageSource === "generated") return { kind: "image", url: scene.image, source: "generated", review: scene.review, note: `${reason} Mevcut kare korundu.`, ledger };
         if (!engine) return { kind: "image", url: scene.image, source: scene.imageSource, review: null, note: `${reason} Mevcut referans görsel kullanıldı.`, ledger };
         const generated = await engine.generate({ prompt: imagePrompt(project, scene), aspectRatio: project.aspectRatio, seed: seedFor(`${scene.id}:${runId}`, step.attempts) });
@@ -274,6 +279,7 @@ export function createProductionWorker(options: WorkerOptions) {
     const image = resolveImageFile(scene.image, { publicDirectory: options.publicDirectory, mediaDirectory: mediaRoot });
     await access(image).catch(() => { throw new AppError(400, `${scene.title} için görsel dosyası bulunamadı.`); });
     const fallback = async (note: string, ledger: { status: "failed" | "released"; note: string }): Promise<StepResult> => {
+      if (paidOnly) throw new AppError(503, `${note} Ücretli video üretilemedi; üretim durduruldu.`);
       await cameraClip(project, scene, path.join(clipsDirectory(project.id), clipFile(scene.id, cameraClipKey(project, scene))));
       return { kind: "video", note, ledger };
     };
