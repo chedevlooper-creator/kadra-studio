@@ -119,6 +119,93 @@ export function compileHiggsfieldPrompt(input: HiggsfieldPromptBuilderInput): st
   return segments.join(", ").slice(0, 4000);
 }
 
+export const NANO_BANANA_TEMPLATES: ReadonlyArray<{
+  id: string;
+  title: string;
+  badge: string;
+  builder: HiggsfieldPromptBuilderInput;
+}> = [
+  {
+    id: "pink-ice-pov",
+    title: "Kırılmış Pembe Buz POV (Yüksek Kontrol)",
+    badge: "POV OPTİK",
+    builder: {
+      subject: "Young woman leaning over a transparent container filled with crushed pink ice, sipping through a bright blue straw",
+      composition: "Ultra-detailed POV shot from inside the container looking upward, slight lens distortion",
+      action: "Sipping with glossy lips and wide playful curiosity as sunlight hits sparkling ice crystals",
+      location: "Clear summer sky overhead with water droplets on container walls",
+      style: "Hyperrealistic textures, high-contrast cinematic saturation",
+      cameraGear: "24mm macro probe lens, f/2.8",
+    },
+  },
+  {
+    id: "medieval-armor",
+    title: "Ortaçağ İşlemeli Zırh Makro",
+    badge: "MATERYAL",
+    builder: {
+      subject: "Ornate medieval knight @Gezgin in engraved steel armor",
+      composition: "Extreme close-up macro framing on chestplate engravings",
+      action: "Breathing slowly as embers drift across the metal",
+      location: "Torchlit stone castle interior",
+      style: "Dark historical realism, shallow depth of field",
+      cameraGear: "85mm f/1.4 cinema prime",
+    },
+  },
+  {
+    id: "oni-samurai",
+    title: "Kızıl Oni Maskeli Samuray",
+    badge: "KARAKTER",
+    builder: {
+      subject: "Samurai in lacquered red armor wearing a fierce red oni mask and weathered headband",
+      composition: "Low-angle heroic medium close-up",
+      action: "Drawing a katana through swirling mist",
+      location: "Moonlit bamboo courtyard",
+      style: "Kurosawa-inspired high-contrast cinema",
+      cameraGear: "50mm anamorphic cinema lens",
+    },
+  },
+  {
+    id: "fighter-jet-vapor",
+    title: "Süpersonik Jet Buhar Konisi",
+    badge: "HIZ & FİZİK",
+    builder: {
+      subject: "Futuristic stealth fighter jet",
+      composition: "Dynamic aerial tracking shot from wingtip perspective",
+      action: "Performing a high-G supersonic maneuver with transonic vapor cones forming around the wings",
+      location: "Above rugged ocean coastline at golden hour",
+      style: "Photorealistic aviation cinematography",
+      cameraGear: "Full-frame cinema camera, 1/2000s shutter",
+    },
+  },
+  {
+    id: "knitted-farmers",
+    title: "Örgü Kumaş Tarlalarda Minyatür Çiftçiler",
+    badge: "MİNYATÜR",
+    builder: {
+      subject: "Tiny miniature farmers with woven baskets",
+      composition: "Tilt-shift isometric macro view from above",
+      action: "Harvesting across giant green knitted wool fabric as if it were terraced mountain fields",
+      location: "Sunlit tabletop diorama",
+      style: "Tactile stop-motion macro photography",
+      cameraGear: "100mm macro tilt-shift lens, f/4",
+    },
+  },
+  {
+    id: "retro-cassette-ad",
+    title: "1980'ler Kaset Çalar Reklam Afişi",
+    badge: "TİPOGRAFİ",
+    builder: {
+      subject: "Floating brushed-aluminum portable cassette player with orange foam headphones",
+      composition: "Centered editorial poster layout with bottom specification lineup",
+      action: "Suspended in mid-air with magnetic tape ribbons spiraling outward",
+      location: "Dark studio backdrop with warm rim light",
+      style: "Retro 1980s magazine print ad, grainy halftone texture",
+      cameraGear: "Medium format studio camera, f/8",
+      quotedText: "KADRA SOUND 1984",
+    },
+  },
+];
+
 export const MCP_CONNECTOR_GUIDES = [
   {
     id: "kadra-local",
@@ -278,6 +365,39 @@ export const MCP_AGENT_SKILLS = [
     aspectRatio: "16:9" as AspectRatio,
     description: "35mm/85mm sinema kamerası yörüngesini, 3 noktalı alan ışıklarını ve sahne zaman çizelgesi işaretçilerini Blender Python (bpy) sahnesi olarak kurar.",
     samplePrompt: "Exploded engineering view where a precision cinema camera separates into floating mechanical parts in mid-air, orbital 35mm camera sweep.",
+  },
+  {
+    id: "genjutsu-remake",
+    slash: "@higgsfield /genjutsu",
+    title: "Genjutsu (Hareket & Kamera Aktarımı)",
+    category: "Motion Design",
+    badge: "GENJUTSU",
+    presetId: "cinematic",
+    aspectRatio: "16:9" as AspectRatio,
+    description: "Referans bir videodaki kamera hareketini, zamanlamayı ve ritmi koruyarak sahneyi kendi @Karakter, @Mekân ve ürünlerinle yeniden çeker.",
+    samplePrompt: "Referans sahnenin kamera yörüngesini ve kesme ritmini koruyarak @Gezgin karakterini @DenizFeneri mekânında yeniden sahnele.",
+  },
+  {
+    id: "marketing-research-to-ads",
+    slash: "/marketing-research-to-ads",
+    title: "Ad Strategist (Pazar Araştırmasından Reklama)",
+    category: "Paid Ads",
+    badge: "STRATEJİ",
+    presetId: "promo",
+    aspectRatio: "9:16" as AspectRatio,
+    description: "Ürün ve rakip analizini hedef pazara uyarlanmış farklı açılarda reklam sahnelerine ve görsel kancalara dönüştürür.",
+    samplePrompt: "Minimalist stüdyo ışığında ürünün üç temel avantajını karşılaştırmalı makro çekimlerle gösteren yüksek dönüşümlü reklam kurgusu.",
+  },
+  {
+    id: "stickman-explainer",
+    slash: "/stickman-explainer",
+    title: "Stickman Cartoon (Çöp Adam Anlatıcı)",
+    category: "Faceless",
+    badge: "EXPLAINER",
+    presetId: "toon",
+    aspectRatio: "16:9" as AspectRatio,
+    description: "Karmaşık bir fikri veya hikâyeyi sade ve esprili çöp adam (stickman) karakterlerle animasyonlu anlatım videosuna dönüştürür.",
+    samplePrompt: "Noktalı defter kağıdı dokusu üzerinde sade siyah çizgili çöp adam karakterin dev bir ampulü yakarak fikri anlattığı eğlenceli animasyon.",
   },
 ] as const;
 

@@ -210,6 +210,23 @@ export default function DiscoverStudio({ projects, favorites, onFavorite, onNavi
         </div>
         <div className="sheet-body hf-xray-dialog-body">
           {inspected.brief ? <div className="hf-xray-brief"><strong>Yönetmen Notu &amp; Görsel Yönlendirme</strong><p>{inspected.brief}</p></div> : null}
+          <div className="hf-xray-cast">
+            <h3>Model Yığını (Stack) &amp; Proje Klasörleri (The Prompter Anatomisi)</h3>
+            <div className="hf-xray-shot-pills">
+              <span>Nano Banana Pro · %41.3</span>
+              <span>Seedance 2.5 · %28.6</span>
+              <span>Soul Cinema Studio · %16.4</span>
+              <span>Soul ID Location · %13.7</span>
+            </div>
+            <div className="hf-xray-shot-pills">
+              <span>📁 All Assets ({inspected.scenes.length + inspected.characters.length + 2})</span>
+              <span>📁 Characters ({inspected.characters.length})</span>
+              <span>📁 Frames ({inspected.scenes.length})</span>
+              <span>📁 Key Art (1)</span>
+              <span>📁 Prompting Sequences ({inspected.scenes.length})</span>
+              <span>📁 Music &amp; Audio ({inspected.music ? 1 : 0})</span>
+            </div>
+          </div>
           {inspected.characters.length ? <div className="hf-xray-cast">
             <h3>Karakter &amp; Mekân Varlıkları (@Elements)</h3>
             <div className="hf-xray-cast-list">
