@@ -41,7 +41,7 @@ export default function CharacterBank({ project, providers, disabled, onProjectC
   const [results, setResults] = useState<WikimediaResult[] | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [sourceFilter, setSourceFilter] = useState<"all" | "wikimedia" | "openverse">("all");
+  const [sourceFilter, setSourceFilter] = useState<"all" | "wikimedia" | "openverse" | "web">("all");
   const [research, setResearch] = useState<CharacterResearchView | null>(null);
   const [estimate, setEstimate] = useState<CharacterEstimate | null>(null);
   const engine = "nano-banana" as const;
@@ -80,10 +80,10 @@ export default function CharacterBank({ project, providers, disabled, onProjectC
   function openSearch(character: Character) {
     setSearchFor(character); setQuery(character.name.replace(/\(.*?\)/g, "").trim()); setImageUrl(""); setResults(null); setResearch(null); setSuggestions([]); setWarnings([]); setSourceFilter("all"); setError("");
   }
-  function doSearch(term: string, broad = false) {
+  function doSearch(term: string, broad = false, web = false) {
     if (!searchFor) return;
     void run("search", async () => {
-      const params = new URLSearchParams({ q: term, ...(broad ? { broad: "1" } : {}) });
+      const params = new URLSearchParams({ q: term, ...(broad ? { broad: "1" } : {}), ...(web ? { web: "1" } : {}) });
       const response = await send<{ results: WikimediaResult[]; research?: CharacterResearchView | null; queries?: string[]; warnings?: string[] }>(`${base}/${searchFor.id}/reference?${params}`, { method: "GET" });
       setResults(response.results);
       setResearch(response.research ?? null);
@@ -120,8 +120,12 @@ export default function CharacterBank({ project, providers, disabled, onProjectC
   }
   function pick(result: WikimediaResult) {
     if (!searchFor) return;
-    const body = result.source === "openverse" && result.id ? { revision: project.revision, source: "openverse" as const, openverseId: result.id } : { revision: project.revision, title: result.title };
-    void run("pick", async () => { apply(await send<{ project: Project }>(`${base}/${searchFor.id}/reference`, json("POST", body)), "Referans fotoğraf kaydedildi; kaynak ve lisans bilgisi karakterde."); setSearchFor(null); });
+    const body = result.source === "web" && result.imageUrl
+      ? { revision: project.revision, source: "web" as const, url: result.imageUrl }
+      : result.source === "openverse" && result.id
+        ? { revision: project.revision, source: "openverse" as const, openverseId: result.id }
+        : { revision: project.revision, title: result.title };
+    void run("pick", async () => { apply(await send<{ project: Project }>(`${base}/${searchFor.id}/reference`, json("POST", body)), result.source === "web" ? "Web görseli referans olarak kaydedildi; kaynak adresi karakterde." : "Referans fotoğraf kaydedildi; kaynak ve lisans bilgisi karakterde."); setSearchFor(null); });
   }
   function upload(file: File) {
     const id = uploadFor.current;
@@ -216,17 +220,17 @@ export default function CharacterBank({ project, providers, disabled, onProjectC
     <dialog ref={searchDialog} className="studio-scene-dialog char-dialog char-search" onCancel={() => setSearchFor(null)} onClose={() => setSearchFor(null)} aria-labelledby="char-search-title">
       {searchFor ? <div>
         <div className="studio-dialog-heading"><div><span className="studio-eyebrow">{providers.deepseek ? "DEEPSEEK WEB ARAMA + WIKIMEDIA + OPENVERSE" : "WIKIMEDIA + OPENVERSE · LİSANSLI FOTOĞRAFLAR"}</span><h2 id="char-search-title">{searchFor.name} için fotoğraf</h2></div><button type="button" aria-label="Kapat" onClick={() => setSearchFor(null)}><X size={18} /></button></div>
-        <form className="char-search-bar" onSubmit={search}><input value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Arama" autoFocus /><button className="studio-button studio-button-secondary" type="submit" disabled={busy !== null || query.trim().length < 2}>{busy === "search" ? <LoaderCircle size={14} className="studio-spin" /> : <Search size={14} />} Ara</button><button className="studio-button studio-button-secondary" type="button" disabled={busy !== null || query.trim().length < 2} onClick={() => doSearch(query, true)}>Daha geniş ara</button></form>
+        <form className="char-search-bar" onSubmit={search}><input value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Arama" autoFocus /><button className="studio-button studio-button-secondary" type="submit" disabled={busy !== null || query.trim().length < 2}>{busy === "search" ? <LoaderCircle size={14} className="studio-spin" /> : <Search size={14} />} Ara</button><button className="studio-button studio-button-secondary" type="button" disabled={busy !== null || query.trim().length < 2} onClick={() => doSearch(query, true)}>Daha geniş ara</button><button className="studio-button studio-button-secondary" type="button" disabled={busy !== null || query.trim().length < 2 || !providers.deepseek} title={providers.deepseek ? "DeepSeek web aramasıyla görsel adresleri aranır" : "DeepSeek anahtarı gerekli"} onClick={() => doSearch(query, false, true)}>{busy === "search" ? <LoaderCircle size={14} className="studio-spin" /> : <Sparkles size={14} />} Web'de ara</button></form>
         <form className="char-search-bar" onSubmit={addImageUrl}><input value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} aria-label="Görsel adresi" placeholder="İnternette bulduğun görselin adresi (https://…)" /><button className="studio-button studio-button-secondary" type="submit" disabled={busy !== null || !/^https:\/\//i.test(imageUrl.trim())}>{busy === "url" ? <LoaderCircle size={14} className="studio-spin" /> : <Upload size={14} />} URL'den ekle</button></form>
         <p className="char-search-note"><Info size={13} /> Web araması, sitelerin bot engelleri ve arama motoru kullanım koşulları nedeniyle uygulama içinde yapılmaz. Görseli tarayıcında bul, doğrudan görsel adresini yapıştır; sunucu yalnızca https ve genel internet adreslerinden indirir. Telif ve kişilik hakları senin sorumluluğunda; kaynak adresi referansla birlikte saklanır.</p>
-        <div className="char-aliases" role="group" aria-label="Kaynak filtresi">{([["all", "Tümü"], ["wikimedia", "Wikimedia"], ["openverse", "Openverse"]] as const).map(([id, label]) => <button key={id} type="button" aria-pressed={sourceFilter === id} className={sourceFilter === id ? "is-shown" : ""} onClick={() => setSourceFilter(id)}>{label}</button>)}</div>
+        <div className="char-aliases" role="group" aria-label="Kaynak filtresi">{([["all", "Tümü"], ["wikimedia", "Wikimedia"], ["openverse", "Openverse"], ["web", "Web (DeepSeek)"]] as const).map(([id, label]) => <button key={id} type="button" aria-pressed={sourceFilter === id} className={sourceFilter === id ? "is-shown" : ""} onClick={() => setSourceFilter(id)}>{label}</button>)}</div>
         {suggestions.length > 1 ? <div className="char-aliases" aria-label="Arama önerileri">{suggestions.map((item) => <button key={item} type="button" disabled={busy !== null} onClick={() => { setQuery(item); doSearch(item); }}>{item}</button>)}</div> : null}
         {warnings.map((item) => <p key={item} className="char-search-note"><TriangleAlert size={13} /> {item}</p>)}
         <p className="char-search-note"><ShieldCheck size={13} /> Doğru kişiyi sen seç: aynı adda başka biri ya da yanlış etiketli bir fotoğraf olabilir. Lisans fotoğrafın telif durumunu gösterir; fotoğraftaki kişinin kişilik haklarını kapsamaz.</p>
         {research && (research.summary || research.appearance) ? <div className="char-estimate" style={{ marginBottom: 12 }}>
           <div><strong>DeepSeek web araştırması</strong><span>{research.summary}{research.appearance ? ` · Görünüş: ${research.appearance}` : ""}</span>{research.appearance || research.aliases.length ? <em><button type="button" className="studio-button studio-button-secondary" disabled={busy !== null} onClick={applyResearch}>Tarifi uygula</button></em> : null}</div>
         </div> : null}
-        {results === null ? null : !results.length ? <p className="char-bank-empty">Sonuç bulunamadı. Önerilerden birini dene veya Daha geniş ara.</p> : <><p className="char-search-note">{results.filter((r) => sourceFilter === "all" || (r.source ?? "wikimedia") === sourceFilter).length} sonuç · Wikimedia + Openverse</p><div className="char-results">{results.filter((r) => sourceFilter === "all" || (r.source ?? "wikimedia") === sourceFilter).map((result) => <button key={`${result.source ?? "wikimedia"}-${result.id ?? result.title}`} type="button" disabled={busy !== null} onClick={() => pick(result)}><img src={result.thumbUrl} alt={result.title} loading="lazy" /><span><strong>{result.title.replace(/^File:/, "").replace(/\.[a-z]+$/i, "")}</strong><small>{result.source === "openverse" ? "Openverse" : "Wikimedia"} · {result.license} · {result.author}</small></span></button>)}</div></>}
+        {results === null ? null : !results.length ? <p className="char-bank-empty">Sonuç bulunamadı. "Daha geniş ara", "Web'de ara" veya URL yapıştırmayı dene.</p> : <><p className="char-search-note">{results.filter((r) => sourceFilter === "all" || (r.source ?? "wikimedia") === sourceFilter).length} sonuç · Wikimedia + Openverse{results.some((r) => r.source === "web") ? " + Web" : ""}</p><div className="char-results">{results.filter((r) => sourceFilter === "all" || (r.source ?? "wikimedia") === sourceFilter).map((result) => <button key={`${result.source ?? "wikimedia"}-${result.imageUrl ?? result.id ?? result.title}`} type="button" disabled={busy !== null} onClick={() => pick(result)}><img src={result.thumbUrl} alt={result.title} loading="lazy" /><span><strong>{result.title.replace(/^File:/, "").replace(/\.[a-z]+$/i, "")}</strong><small>{result.source === "openverse" ? "Openverse" : result.source === "web" ? "Web" : "Wikimedia"} · {result.license} · {result.author}</small></span></button>)}</div></>}
         {busy === "pick" ? <p className="char-search-note"><LoaderCircle size={13} className="studio-spin" /> Fotoğraf indiriliyor…</p> : null}
       </div> : null}
     </dialog>

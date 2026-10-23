@@ -1,4 +1,4 @@
-import type { ImageReview, SheetVerdict } from "../types";
+import type { ImageReview, SheetVerdict, WikimediaResult } from "../types";
 import { extractJson, parseAiPlan, parseReview, parseSheetVerdict, planInstructions, ProviderError, reviewQuestion, sheetCriteria, type AiPlan, type PlanRequest } from "./nvidia";
 
 /**
@@ -103,6 +103,61 @@ export async function searchWebWithDeepSeek(query: string, options: { count?: nu
 export async function fetchPageWithDeepSeek(url: string): Promise<{ title: string; content: string }> {
   const data = await request<{ title?: string; content?: string }>("/v1/tools/fetch", { url: url.trim().slice(0, 8_192) }, 25_000);
   return { title: data.title ?? "", content: data.content ?? "" };
+}
+
+const IMAGE_URL = /https?:\/\/[^\s"'<>(){}]+?\.(?:jpe?g|png|webp)(?:\?[^\s"'<>(){}]*)?/gi;
+
+/**
+ * Finds absolute image URLs in search snippets and page content. Only https addresses are usable as
+ * references; the user still sees and picks each candidate before anything is downloaded.
+ */
+export function extractImageUrls(texts: (string | null | undefined)[], limit = 12): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const text of texts) {
+    if (!text) continue;
+    for (const match of text.matchAll(IMAGE_URL)) {
+      const raw = match[0].replace(/[.,;:]+$/, "");
+      try {
+        const url = new URL(raw);
+        if (url.protocol !== "https:") continue;
+        const value = url.toString();
+        if (seen.has(value)) continue;
+        seen.add(value);
+        urls.push(value);
+        if (urls.length >= limit) return urls;
+      } catch { /* Skip malformed URLs. */ }
+    }
+  }
+  return urls;
+}
+
+/** DeepSeek web search + page content as an unlicensed photo finder; every hit is tagged as a web image. */
+export async function searchImagesWithDeepSeek(query: string, name = query): Promise<WikimediaResult[]> {
+  const term = `${name} portre fotoğraf`.slice(0, 128);
+  const hits = await searchWebWithDeepSeek(term, { count: 10, needContent: true, oriQuestion: `${name} portre fotoğraf görsel`.slice(0, 128) }).catch(() => []);
+  const seen = new Set<string>();
+  const results: WikimediaResult[] = [];
+  for (const hit of hits) {
+    for (const url of extractImageUrls([hit.content, hit.summary, hit.snippet])) {
+      if (seen.has(url)) continue;
+      seen.add(url);
+      results.push({
+        title: (hit.title || name).slice(0, 200),
+        pageUrl: hit.url.slice(0, 600),
+        thumbUrl: url,
+        width: 0,
+        height: 0,
+        license: "Web görseli — kullanım hakkını kontrol edin",
+        licenseUrl: null,
+        author: new URL(url).hostname,
+        source: "web",
+        imageUrl: url,
+      });
+      if (results.length >= 12) return results;
+    }
+  }
+  return results;
 }
 
 export interface CharacterWebResearch {

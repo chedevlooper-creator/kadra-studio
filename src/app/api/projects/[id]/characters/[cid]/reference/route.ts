@@ -3,7 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { api, json, readBody } from "@/lib/http";
 import { projectMediaDirectory } from "@/lib/media";
-import { deepseekConfigured, researchCharacterWithDeepSeek } from "@/lib/providers/deepseek";
+import { deepseekConfigured, researchCharacterWithDeepSeek, searchImagesWithDeepSeek } from "@/lib/providers/deepseek";
 import { fetchOpenverseFile, searchOpenverse } from "@/lib/providers/openverse";
 import { fetchWebImage, webImageMeta } from "@/lib/providers/web-images";
 import { expandQueryVariants, fetchCommonsFile, searchCommonsMulti } from "@/lib/providers/wikimedia";
@@ -23,26 +23,30 @@ export async function GET(request: Request, context: Context) {
     const q = params.get("q") ?? "";
     const source = params.get("source") ?? "all";
     const broad = params.get("broad") === "1";
+    const wantsWeb = params.get("web") === "1" || source === "web";
     const warnings: string[] = [];
+    const project = await repository.getProject(id).catch(() => null);
+    const character = project?.characters.find((item) => item.id === cid);
     let research: Awaited<ReturnType<typeof researchCharacterWithDeepSeek>> | null = null;
     let queries = [q];
     if (deepseekConfigured()) {
-      const project = await repository.getProject(id).catch(() => null);
-      const character = project?.characters.find((item) => item.id === cid);
       research = await researchCharacterWithDeepSeek({ name: character?.name ?? q, query: q, appearance: character?.appearance });
       if (research.commonsQueries.length) queries = [...new Set([q, ...research.commonsQueries, ...(character?.aliases ?? [])])];
       if (!research.summary && !research.appearance) warnings.push("DeepSeek araştırması sonuç döndürmedi; arama yerel varyantlarla genişletildi.");
     }
     const suggestions = [...new Set(queries.flatMap((item) => expandQueryVariants(item)))].slice(0, 10);
-    const wantWikimedia = source !== "openverse";
-    const wantOpenverse = source !== "wikimedia";
-    const [commons, openverse] = await Promise.all([
+    const wantWikimedia = source !== "openverse" && source !== "web";
+    const wantOpenverse = source !== "wikimedia" && source !== "web";
+    if (wantsWeb && !deepseekConfigured()) warnings.push("DeepSeek anahtarı tanımlı değil; web araması yapılamadı. Görsel adresini yapıştırabilir veya fotoğraf yükleyebilirsin.");
+    const [commons, openverse, web] = await Promise.all([
       wantWikimedia ? searchCommonsMulti(queries, { broad, limit: 80 }).catch(() => { warnings.push("Wikimedia Commons'a ulaşılamadı."); return []; }) : Promise.resolve([]),
       wantOpenverse ? Promise.all(queries.slice(0, 3).map((item) => searchOpenverse(item, 32).catch(() => []))).then((batches) => batches.flat()) : Promise.resolve([]),
+      wantsWeb && deepseekConfigured() ? searchImagesWithDeepSeek(q || character?.name || "", character?.name ?? q).catch(() => []) : Promise.resolve([]),
     ]);
+    if (wantsWeb && deepseekConfigured() && !web.length) warnings.push("DeepSeek web aramasında doğrudan görsel adresi bulunamadı. Sayfayı açıp görselin adresini yapıştırabilirsin.");
     const seen = new Set<string>();
-    const results = [...commons, ...openverse].filter((item) => {
-      const key = `${item.source ?? "wikimedia"}:${item.id ?? item.title}`;
+    const results = [...web, ...commons, ...openverse].filter((item) => {
+      const key = `${item.source ?? "wikimedia"}:${item.imageUrl ?? item.id ?? item.title}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
