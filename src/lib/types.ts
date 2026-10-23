@@ -12,7 +12,7 @@ export type MotionMode = "free" | "ai";
 
 /** A real photo the user picked as the basis of a character; its source and licence travel with it. */
 export interface ReferencePhoto {
-  source: "wikimedia" | "upload" | "openverse";
+  source: "wikimedia" | "upload" | "openverse" | "web";
   title: string;
   pageUrl: string | null;
   file: string;
@@ -385,7 +385,7 @@ export interface WikimediaResult {
   license: string;
   licenseUrl: string | null;
   author: string;
-  source?: "wikimedia" | "openverse";
+  source?: "wikimedia" | "openverse" | "web";
   id?: string;
   imageUrl?: string;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Check, ExternalLink, ImagePlus, LoaderCircle, MapPin, Pencil, Plus, Search, ShieldCheck, Sparkles, Trash2, TriangleAlert, Upload, Users, WandSparkles, X } from "lucide-react";
+import { Check, ExternalLink, ImagePlus, Info, LoaderCircle, MapPin, Pencil, Plus, Search, ShieldCheck, Sparkles, Trash2, TriangleAlert, Upload, Users, WandSparkles, X } from "lucide-react";
 import type { Character, CharacterEstimate, CharacterResearchView, Project, ProviderStatus, SheetAttempt, WikimediaResult } from "@/lib/types";
 import RepairDialog, { type RepairTarget } from "./repair-dialog";
 
@@ -37,6 +37,7 @@ export default function CharacterBank({ project, providers, disabled, onProjectC
   const [draft, setDraft] = useState<Draft | null>(null);
   const [searchFor, setSearchFor] = useState<Character | null>(null);
   const [query, setQuery] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
   const [results, setResults] = useState<WikimediaResult[] | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -77,7 +78,7 @@ export default function CharacterBank({ project, providers, disabled, onProjectC
   }
 
   function openSearch(character: Character) {
-    setSearchFor(character); setQuery(character.name.replace(/\(.*?\)/g, "").trim()); setResults(null); setResearch(null); setSuggestions([]); setWarnings([]); setSourceFilter("all"); setError("");
+    setSearchFor(character); setQuery(character.name.replace(/\(.*?\)/g, "").trim()); setImageUrl(""); setResults(null); setResearch(null); setSuggestions([]); setWarnings([]); setSourceFilter("all"); setError("");
   }
   function doSearch(term: string, broad = false) {
     if (!searchFor) return;
@@ -93,6 +94,19 @@ export default function CharacterBank({ project, providers, disabled, onProjectC
   function search(event?: FormEvent) {
     event?.preventDefault();
     doSearch(query);
+  }
+  /** Any public https image URL can become the reference; no scraping, no search-engine key. */
+  function addImageUrl(event: FormEvent) {
+    event.preventDefault();
+    if (!searchFor) return;
+    const url = imageUrl.trim();
+    if (!/^https:\/\//i.test(url)) { setError("Görsel adresi https:// ile başlamalı."); return; }
+    void run("url", async () => {
+      const result = await send<{ project: Project }>(`${base}/${searchFor.id}/reference`, json("POST", { revision: project.revision, source: "web", url }));
+      apply(result, "Web görseli referans olarak eklendi; karakter sayfası bu fotoğraftan üretilecek.");
+      setImageUrl("");
+      setSearchFor(null);
+    });
   }
   function applyResearch() {
     if (!searchFor || !research) return;
@@ -203,6 +217,8 @@ export default function CharacterBank({ project, providers, disabled, onProjectC
       {searchFor ? <div>
         <div className="studio-dialog-heading"><div><span className="studio-eyebrow">{providers.deepseek ? "DEEPSEEK WEB ARAMA + WIKIMEDIA + OPENVERSE" : "WIKIMEDIA + OPENVERSE · LİSANSLI FOTOĞRAFLAR"}</span><h2 id="char-search-title">{searchFor.name} için fotoğraf</h2></div><button type="button" aria-label="Kapat" onClick={() => setSearchFor(null)}><X size={18} /></button></div>
         <form className="char-search-bar" onSubmit={search}><input value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Arama" autoFocus /><button className="studio-button studio-button-secondary" type="submit" disabled={busy !== null || query.trim().length < 2}>{busy === "search" ? <LoaderCircle size={14} className="studio-spin" /> : <Search size={14} />} Ara</button><button className="studio-button studio-button-secondary" type="button" disabled={busy !== null || query.trim().length < 2} onClick={() => doSearch(query, true)}>Daha geniş ara</button></form>
+        <form className="char-search-bar" onSubmit={addImageUrl}><input value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} aria-label="Görsel adresi" placeholder="İnternette bulduğun görselin adresi (https://…)" /><button className="studio-button studio-button-secondary" type="submit" disabled={busy !== null || !/^https:\/\//i.test(imageUrl.trim())}>{busy === "url" ? <LoaderCircle size={14} className="studio-spin" /> : <Upload size={14} />} URL'den ekle</button></form>
+        <p className="char-search-note"><Info size={13} /> Web araması, sitelerin bot engelleri ve arama motoru kullanım koşulları nedeniyle uygulama içinde yapılmaz. Görseli tarayıcında bul, doğrudan görsel adresini yapıştır; sunucu yalnızca https ve genel internet adreslerinden indirir. Telif ve kişilik hakları senin sorumluluğunda; kaynak adresi referansla birlikte saklanır.</p>
         <div className="char-aliases" role="group" aria-label="Kaynak filtresi">{([["all", "Tümü"], ["wikimedia", "Wikimedia"], ["openverse", "Openverse"]] as const).map(([id, label]) => <button key={id} type="button" aria-pressed={sourceFilter === id} className={sourceFilter === id ? "is-shown" : ""} onClick={() => setSourceFilter(id)}>{label}</button>)}</div>
         {suggestions.length > 1 ? <div className="char-aliases" aria-label="Arama önerileri">{suggestions.map((item) => <button key={item} type="button" disabled={busy !== null} onClick={() => { setQuery(item); doSearch(item); }}>{item}</button>)}</div> : null}
         {warnings.map((item) => <p key={item} className="char-search-note"><TriangleAlert size={13} /> {item}</p>)}

@@ -51,7 +51,7 @@ const verdictSchema = z.object({ ok: z.boolean(), scores: z.object({ style: z.nu
 const characterSchema = z.object({
   id: z.string().max(20), kind: z.enum(["person", "place"]).default("person"), name: z.string().max(80), appearance: z.string().max(1_200),
   aliases: z.array(z.string().max(80)).max(12).default([]), style: z.string().max(400).default(""),
-  reference: z.object({ source: z.enum(["wikimedia", "upload", "openverse"]), title: z.string().max(300), pageUrl: z.string().max(600).nullable(), file: z.string().regex(/^ref-[a-zA-Z0-9_-]+\.(jpg|png)$/), author: z.string().max(300), license: z.string().max(120), licenseUrl: z.string().max(400).nullable(), addedAt: z.string().datetime() }).strict().nullable().default(null),
+  reference: z.object({ source: z.enum(["wikimedia", "upload", "openverse", "web"]), title: z.string().max(300), pageUrl: z.string().max(600).nullable(), file: z.string().regex(/^ref-[a-zA-Z0-9_-]+\.(jpg|png)$/), author: z.string().max(300), license: z.string().max(120), licenseUrl: z.string().max(400).nullable(), addedAt: z.string().datetime() }).strict().nullable().default(null),
   sheet: z.object({
     status: z.enum(["none", "producing", "review", "approved", "failed"]),
     attempts: z.array(z.object({ id: idSchema, runId: idSchema, url: z.string(), at: z.string().datetime(), engine: z.enum(["flux", "nano-banana", "repair"]), verdict: verdictSchema.nullable(), cost: z.number().min(0) }).strict()).max(24),

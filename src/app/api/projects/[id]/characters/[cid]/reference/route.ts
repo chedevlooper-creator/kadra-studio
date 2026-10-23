@@ -5,6 +5,7 @@ import { api, json, readBody } from "@/lib/http";
 import { projectMediaDirectory } from "@/lib/media";
 import { deepseekConfigured, researchCharacterWithDeepSeek } from "@/lib/providers/deepseek";
 import { fetchOpenverseFile, searchOpenverse } from "@/lib/providers/openverse";
+import { fetchWebImage, webImageMeta } from "@/lib/providers/web-images";
 import { expandQueryVariants, fetchCommonsFile, searchCommonsMulti } from "@/lib/providers/wikimedia";
 import { repository } from "@/lib/store";
 import type { ReferencePhoto } from "@/lib/types";
@@ -70,6 +71,10 @@ export async function POST(request: Request, context: Context) {
     const type = request.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
     if (type === "application/json") {
       const body = await readBody(request, commonsSelectSchema);
+      if ("url" in body) {
+        const { bytes, type: kind } = await fetchWebImage(body.url);
+        return json({ project: await store(id, cid, body.revision, bytes, kind, webImageMeta(body.url)) });
+      }
       if ("openverseId" in body) {
         const { meta, bytes, type: kind } = await fetchOpenverseFile(body.openverseId);
         return json({ project: await store(id, cid, body.revision, bytes, kind, { source: "openverse", title: meta.title, pageUrl: meta.pageUrl, author: meta.author, license: meta.license, licenseUrl: meta.licenseUrl }) });

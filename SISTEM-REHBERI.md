@@ -487,7 +487,7 @@ docs/                          ← mimari ve geliştirme planı
 | :--- | :--- | :--- |
 | **Müzik şeridi** | Var | Zaman çizelgesinden ses dosyası yüklenip ses seviyesi ve başlangıç saniyesiyle MP4'e mikslenir. |
 | **Otomatik seslendirme (TTS)** | Var | Çekim seslendirme metinleri `narration` alanında saklanır. Ücretsiz taslak macOS sesiyle (Yelda) ya da onaylı Üretim teklifiyle MiniMax Türkçe sesleriyle okunur; her metin bir kez üretilip önbelleğe alınır, konuşma sırasında müzik otomatik kısılır. |
-| **Karakter Bankası ve Referans** | Var | Wikimedia Commons + DeepSeek web araştırması + kullanıcı fotoğraf yükleme + FLUX / Nano Banana 2.1 karakter sayfası + sahne karelerinde referans kullanımı aktiftir. |
+| **Karakter Bankası ve Referans** | Var | Wikimedia Commons + Openverse + DeepSeek web araştırması + kullanıcı fotoğraf yükleme + **https görsel adresiyle web referansı** + GMI Nano Banana 2.1 karakter sayfası + sahne karelerinde referans kullanımı aktiftir. Web adresleri yalnızca genel internet adreslerinden (SSRF korumalı) indirilir; telif/kişilik hakkı kullanıcıdadır. |
 | **Çekim sayısı** | En fazla 40 | Uzun işler bölümlere ayrılmalı. |
 | **Veritabanı** | Tek JSON dosyası | Atomik yazım ve dosya kilidinin yanında günlük yedek (`.data/backups/`) ve migration öncesi anlık görüntü alınır. Yerel tek kullanıcı için yeterli; çok kullanıcılı sürümde PostgreSQL + pg-boss planlanıyor. |
 

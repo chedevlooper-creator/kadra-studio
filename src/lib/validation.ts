@@ -103,6 +103,7 @@ export const characterReviewSchema = z.object({ revision: revisionSchema, action
 export const commonsSelectSchema = z.union([
   z.object({ revision: revisionSchema, source: z.literal("openverse"), openverseId: z.string().trim().min(8).max(80).regex(/^[A-Za-z0-9-]+$/) }).strict(),
   z.object({ revision: revisionSchema, source: z.literal("wikimedia").optional(), title: z.string().trim().min(6).max(300).regex(/^File:/, "Wikimedia dosya adı \"File:\" ile başlamalı.") }).strict(),
+  z.object({ revision: revisionSchema, source: z.literal("web"), url: z.string().trim().min(12).max(2_048).refine((value) => /^https:\/\//i.test(value), "Görsel adresi https:// ile başlamalı.") }).strict(),
 ]);
 
 const fraction = z.number().finite().min(0).max(1);
