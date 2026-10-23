@@ -87,27 +87,27 @@ export default function RepairDialog({ project, target, onClose, onStarted }: { 
     finally { setBusy(false); }
   }
 
-  return <dialog ref={dialog} className="studio-scene-dialog char-dialog repair-dialog" aria-labelledby="repair-title" onCancel={onClose} onClose={onClose}>
+  return <dialog ref={dialog} className="sheet repair-dialog" aria-labelledby="repair-title" onCancel={onClose} onClose={onClose}>
     {target && image ? <div>
-      <div className="studio-dialog-heading"><div><span className="studio-eyebrow">YALNIZCA HATALI BÖLGE</span><h2 id="repair-title">{title}: bölgeyi onar</h2></div><button type="button" aria-label="Kapat" onClick={onClose}><X size={18} /></button></div>
-      <div className="studio-dialog-fields">
+      <div className="sheet-head"><div><h2 id="repair-title">{title}: bir bölgeyi onar</h2><p className="quiet">Yalnızca çizdiğin alan yeniden çizilir; gerisi piksel piksel aynı kalır.</p></div><button type="button" className="icon-button" aria-label="Kapat" onClick={onClose}><X size={18} /></button></div>
+      <div className="sheet-body">
         <div ref={stage} className="repair-stage" onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); start.current = point(event); setBox(null); }} onPointerMove={draw} onPointerUp={(event) => { draw(event); start.current = null; }} onPointerCancel={() => { start.current = null; }}>
           <img src={image} alt={`${title} görseli`} draggable={false} />
           {issues.map((issue, index) => <span key={index} className="repair-issue-box" style={percent(issue.box)} />)}
           {box ? <span className="repair-box" style={percent(box)} /> : null}
         </div>
-        <p className="repair-hint">Görselde düzeltilecek alanı sürükleyerek çiz. Yalnızca bu alan yeniden çizilir; dışındaki her piksel olduğu gibi korunur.</p>
+        <p className="repair-hint">Düzeltilecek alanı görselin üzerinde sürükleyerek seç.</p>
         {issues.length ? <div className="repair-issues" aria-label="Hakemin bulduğu sorunlar">{issues.map((issue, index) => <button key={index} type="button" className={box && pad(issue.box).every((value, i) => Math.abs(value - box[i]) < 0.001) ? "is-selected" : ""} onClick={() => { setBox(pad(issue.box)); setInstruction(issue.fix || issue.problem); }}><TriangleAlert size={11} /> {issue.problem || issue.fix}</button>)}</div> : null}
-        <label className="studio-field"><span>Bu alanda ne düzeltilsin? <small>Kısa ve yalnızca bu alanı anlatan bir talimat</small></span><textarea rows={2} maxLength={600} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="Örn. Redraw the left hand with five natural fingers" /></label>
-        {needsBudget ? <label className="studio-field"><span>Proje bütçesi (USD) <small>Ücretli işlemler bu tutarı aşamaz</small></span><input type="number" min={0} step="0.5" inputMode="decimal" value={budget} onChange={(event) => setBudget(event.target.value)} /></label> : null}
+        <label className="field"><span>Bu alanda ne düzeltilsin? <small>Doğal Türkçe yazabilirsin; arka planda DeepSeek İngilizceye çevirip geliştirir</small></span><textarea rows={2} maxLength={600} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="Örn. Sol eli beş doğal parmak olacak şekilde düzelt" /></label>
+        {needsBudget ? <label className="field"><span>Proje bütçesi (USD) <small>Ücretli işlemler bu tutarı aşamaz</small></span><input type="number" min={0} step="0.5" inputMode="decimal" value={budget} onChange={(event) => setBudget(event.target.value)} /></label> : null}
         <div className="char-estimate">
-          {estimate ? <div><strong>{estimate.modelLabel}</strong><span>Maskeli düzenleme · tek istek · bütçeden önce ayrılır</span><em>{estimate.unitCost ? `en fazla ${usd(estimate.unitCost)}` : "—"}</em></div> : <div><span><LoaderCircle size={12} className="studio-spin" /> Güncel fiyat GMI&apos;dan alınıyor…</span></div>}
+          {estimate ? <div><strong>{estimate.modelLabel}</strong><span>Maskeli düzenleme · tek istek · bütçeden önce ayrılır</span><em>{estimate.unitCost ? `en fazla ${usd(estimate.unitCost)}` : "—"}</em></div> : <div><span><LoaderCircle size={12} className="spin" /> Güncel fiyat GMI&apos;dan alınıyor…</span></div>}
           {estimate?.problems.map((problem) => <p key={problem} className="paid-errors"><TriangleAlert size={12} /> {problem}</p>)}
-          <p className="char-search-note"><ShieldCheck size={13} /> Görsel ve maske GMI depolamasına yüklenir. Gönderimin sonucu belirsiz kalırsa istek tekrar gönderilmez. Sonuç beğenilmezse önceki hâline tek tıkla dönebilirsin.</p>
+          <p className="char-search-note"><ShieldCheck size={13} /> Beğenmezsen önceki hâline tek tıkla dönebilirsin.</p>
         </div>
-        {error ? <p className="studio-dialog-error" role="alert">{error}</p> : null}
+        {error ? <p className="note note-error" role="alert">{error}</p> : null}
       </div>
-      <div className="studio-dialog-footer"><span>{tooSmall ? "Önce görselde bir alan seç." : ""}</span><button className="studio-button studio-button-primary" type="button" disabled={busy || !ready} onClick={() => void submit()}>{busy ? <LoaderCircle size={14} className="studio-spin" /> : estimate ? <WandSparkles size={14} /> : <Check size={14} />} {estimate?.unitCost ? `Onayla ve onar · ${usd(estimate.unitCost)}` : "Onar"}</button></div>
+      <div className="sheet-actions"><span>{tooSmall ? "Önce görselde bir alan seç." : ""}</span><button className="button button-lamp" type="button" disabled={busy || !ready} onClick={() => void submit()}>{busy ? <LoaderCircle size={14} className="spin" /> : estimate ? <WandSparkles size={14} /> : <Check size={14} />} {estimate?.unitCost ? `Onayla ve onar · ${usd(estimate.unitCost)}` : "Onar"}</button></div>
     </div> : null}
   </dialog>;
 }

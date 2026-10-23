@@ -179,8 +179,8 @@ const aiPlan: AiPlan = {
   characters: [{ id: "hero", name: "Ada", appearance: "short red hair, green raincoat" }],
   locations: [{ id: "valley", name: "Vadi", appearance: "misty green valley under a pale sky" }],
   shots: [
-    { title: "Sabah", kind: "video", duration_seconds: 5, camera: "Yavaş yaklaşma", character_ids: ["hero", "ghost"], location_id: "valley", description: "Ada dağa bakar.", on_screen_text: "", image_prompt: "Ada looks at the mountain", motion_prompt: "slow push in", narration: "Her şey burada başladı." },
-    { title: "Son", kind: "title", duration_seconds: 4, camera: "", character_ids: [], location_id: "", description: "", on_screen_text: "Yol devam eder.", image_prompt: "", motion_prompt: "", narration: "" },
+    { title: "Sabah", kind: "video", duration_seconds: 5, camera: "Yavaş yaklaşma", character_ids: ["hero", "ghost"], emotions: { hero: "afraid", ghost: "angry", valley: "sad", nobody: "happy" }, location_id: "valley", description: "Ada dağa bakar.", on_screen_text: "", image_prompt: "Ada looks at the mountain", motion_prompt: "slow push in", narration: "Her şey burada başladı." },
+    { title: "Son", kind: "title", duration_seconds: 4, camera: "", character_ids: [], emotions: {}, location_id: "", description: "", on_screen_text: "Yol devam eder.", image_prompt: "", motion_prompt: "", narration: "" },
   ],
 };
 
@@ -196,6 +196,7 @@ test("AI plans map characters and title text; failures fall back to the heuristi
   ]);
   assert.equal(planned.characters[0].sheet.status, "none");
   assert.deepEqual(planned.scenes[0].characterIds, ["c1", "m1"], "a shot links its cast and its location");
+  assert.deepEqual(planned.scenes[0].emotions, { c1: "afraid" }, "only known characters of the shot keep their emotion; places and unknown names are dropped");
   assert.equal(planned.scenes[1].kind, "title");
   assert.equal(planned.scenes[1].description, "Yol devam eder.");
   assert.equal(planned.duration, 9);
@@ -454,8 +455,8 @@ test("characters link to the shots that mention them and leave cleanly", async (
 test("character estimates price photo-based sheets and keep description-based ones free", () => {
   const sheet = { status: "none" as const, attempts: [], chosen: null, note: "" };
   const project = { budget: 0.2, ledger: [], characters: [
-    { id: "c1", kind: "person" as const, name: "A", appearance: "", aliases: [], style: "", reference: photo, sheet },
-    { id: "c2", kind: "person" as const, name: "B", appearance: "", aliases: [], style: "", reference: null, sheet },
+    { id: "c1", framing: "auto" as const, kind: "person" as const, name: "A", appearance: "", aliases: [], style: "", reference: photo, sheet },
+    { id: "c2", framing: "auto" as const, kind: "person" as const, name: "B", appearance: "", aliases: [], style: "", reference: null, sheet },
   ] };
   const estimate = estimateCharacters(project, ["c1", "c2"], { nvidia: true, gmi: true, ffmpeg: true }, 0.041);
   assert.deepEqual(estimate.lines.map((line) => [line.engine, line.maxCost]), [["nano-banana", 0.123], ["flux", 0]]);
@@ -580,4 +581,150 @@ test("paid-only imports a storyboard with every video shot set to AI motion", as
   });
   assert.equal(imported.scenes[0].model, "GMI video · yapay zekâ");
   assert.ok(imported.scenes.filter((scene) => scene.kind === "video").every((scene) => scene.motion === "ai"));
+});
+
+test("DeepSeek promptEnhancer upgrades colloquial Turkish prompts on plan, scene edit and quote", async (t) => {
+  const calls: string[][] = [];
+  const { repository } = await fixture(t, {
+    ...paidOnlyOptions,
+    promptEnhancer: async (req) => {
+      calls.push(req.shots.map((shot) => shot.prompt));
+      return req.shots.map((shot) => ({
+        id: shot.id,
+        imagePrompt: `Cinematic 35mm English frame for: ${shot.prompt}`,
+        motionPrompt: `Smooth camera dolly for ${shot.title}`,
+      }));
+    },
+  });
+  const created = await repository.createProject({
+    title: "Türkçe Prompt",
+    script: "Sahne 1: adam sisli dağda yürüyo sabah güneş doğuyo.\n\nFinal: Yazı kartı: Bitti.",
+    style: "Sinematik",
+    aspectRatio: "16:9",
+    budget: 5,
+  });
+  const planned = await repository.planProject(created.id, created.revision, "heuristic");
+  const videoShot = planned.scenes.find((scene) => scene.kind === "video")!;
+  assert.match(videoShot.promptEn, /^Cinematic 35mm English frame for:/);
+  assert.equal(videoShot.promptEnSource, videoShot.prompt);
+  assert.match(videoShot.motionPrompt, /^Smooth camera dolly for/);
+
+  const edited = await repository.updateScene(planned.id, videoShot.id, planned.revision, {
+    prompt: "gece yağmur altında koşuyo ışıklar yansıyo",
+  });
+  const afterEdit = edited.scenes.find((scene) => scene.id === videoShot.id)!;
+  assert.equal(afterEdit.prompt, "gece yağmur altında koşuyo ışıklar yansıyo");
+  assert.equal(afterEdit.promptEn, "Cinematic 35mm English frame for: gece yağmur altında koşuyo ışıklar yansıyo");
+  assert.equal(afterEdit.promptEnSource, "gece yağmur altında koşuyo ışıklar yansıyo");
+  assert.equal(calls.length, 2, "plan and scene edit each enhanced the video shot");
+
+  const quoted = await repository.prepareQuote(planned.id, {
+    revision: edited.revision,
+    quality: "economy",
+    budget: 5,
+    selections: [],
+  });
+  assert.equal(calls.length, 2, "prepareQuote reuses the already-synced promptEn without calling DeepSeek again");
+  const started = await repository.startRun(planned.id, quoted.revision, "enhanced-quote-run", quoted.quote!.id);
+  assert.equal(started.run?.status, "running");
+});
+
+test("a project keeps its brief and presets, and a shot keeps feelings only for the people in it", async (t) => {
+  const { repository } = await fixture(t, offline);
+  const created = await repository.createProject({ ...input, genre: "horror", look: "cold", brief: "Düşük ışık, derin gölgeler." });
+  assert.deepEqual([created.genre, created.look, created.brief], ["horror", "cold", "Düşük ışık, derin gölgeler."]);
+  const planned = await repository.planProject(created.id, created.revision, "heuristic");
+  const withHero = await repository.addCharacter(planned.id, planned.revision, { name: "Dağların", appearance: "mavi pelerin", aliases: ["dağların"], style: "" });
+  const scene = withHero.scenes.find((item) => item.characterIds.includes("c1"))!;
+  const felt = await repository.updateScene(withHero.id, scene.id, withHero.revision, { emotions: { c1: "afraid", c9: "happy" } });
+  assert.deepEqual(felt.scenes.find((item) => item.id === scene.id)!.emotions, { c1: "afraid" }, "an unlinked id is dropped");
+  const unlinked = await repository.updateScene(felt.id, scene.id, felt.revision, { characterIds: [] });
+  assert.deepEqual(unlinked.scenes.find((item) => item.id === scene.id)!.emotions, {}, "removing a person from the shot removes their feeling");
+  const noted = await repository.updateProject(unlinked.id, { revision: unlinked.revision, brief: "Renkli neon yok." });
+  assert.equal(noted.brief, "Renkli neon yok.");
+  assert.equal(noted.scenes.length, planned.scenes.length, "a new brief does not re-plan the film");
+  await assert.rejects(repository.updateScene(noted.id, scene.id, noted.revision, { emotions: { c1: "furious" } }), /alanlarını ve sınırlarını/);
+});
+
+test("a quote warns when people in the shots have no approved reference sheet", async (t) => {
+  const { repository } = await fixture(t, { ...paidOptions, referenceImagePrice: async () => 0.041 });
+  const planned = await plannedProject(repository);
+  const added = await repository.addCharacter(planned.id, planned.revision, { name: "Yolcu", appearance: "mavi pelerin", aliases: ["dağların"], style: "" });
+  const quoted = await repository.prepareQuote(added.id, { revision: added.revision, quality: "economy", budget: 2, referenceFrames: true, selections: [] });
+  assert.equal(quoted.quote!.warnings.length, 1);
+  assert.match(quoted.quote!.warnings[0], /^Yolcu: 1 sahnede onaylı karakter sayfası yok; bu karelerde yüz ve görünüş yalnızca yazıdan çizilir/);
+});
+
+
+test("paid-only frame quotes survive reload, exclude film costs and run without FFmpeg", async (t) => {
+  let videoLookups = 0;
+  let voiceLookups = 0;
+  const options: RepositoryOptions = {
+    ...paidOnlyOptions,
+    providers: async () => ({ nvidia: false, gmi: true, ffmpeg: false }),
+    videoPrices: async () => { videoLookups++; throw new Error("Video rates must not be needed"); },
+    voicePrice: async () => { voiceLookups++; throw new Error("Voice rates must not be needed"); },
+  };
+  const { directory, repository } = await fixture(t, options);
+  const planned = await plannedProject(repository);
+  const voiced = await repository.updateProject(planned.id, { revision: planned.revision, narration: { engine: "gmi", voice: "Turkish_CalmWoman", speed: 1, volume: 1 } });
+  const quoted = await repository.prepareQuote(voiced.id, { target: "frames", revision: voiced.revision, quality: "economy", budget: 1, referenceFrames: true, frameModel: "gemini-nano-banana-2.1", selections: [] });
+  assert.equal(quoted.quote!.target, "frames");
+  assert.deepEqual(quoted.quote!.lines.map((line) => line.kind), ["image"]);
+  assert.equal(quoted.quote!.total, 0.041);
+  assert.equal(quoted.quote!.withinBudget, true);
+  assert.equal(videoLookups, 0);
+  assert.equal(voiceLookups, 0);
+  const reopened = createProjectRepository(directory, options);
+  assert.equal((await reopened.getProject(quoted.id)).quote!.target, "frames");
+  const started = await reopened.startRun(quoted.id, quoted.revision, "frames-paid-run-01", quoted.quote!.id, { target: "frames" });
+  assert.deepEqual(started.run!.steps.map((step) => step.kind), ["image"]);
+  assert.equal(started.run!.target, "frames");
+  assert.deepEqual(started.ledger.map((line) => line.kind), ["image"]);
+  assert.equal(started.run!.cost, 0.041);
+  const replay = await reopened.startRun(quoted.id, quoted.revision, "frames-paid-run-01", quoted.quote!.id, { target: "frames" });
+  assert.equal(replay.run!.id, started.run!.id);
+  assert.equal(replay.ledger.length, 1);
+  await assert.rejects(reopened.startRun(quoted.id, quoted.revision, "frames-paid-run-01", quoted.quote!.id, { target: "film" }), /anahtarı/);
+  const claimed = await reopened.claimStep(workerA, 30_000);
+  assert.ok(claimed);
+  const imageUrl = `/api/projects/${started.id}/media/test-frame.png`;
+  await reopened.completeStep(started.id, started.run!.id, claimed.step.id, { kind: "image", url: imageUrl, source: "generated", review: null, note: "Test frame", frameModel: "gemini-nano-banana-2.1", ledger: { status: "charged", note: "Stubbed provider result" } });
+  const finished = await reopened.getProject(started.id);
+  assert.equal(finished.run!.status, "completed");
+  assert.equal(finished.run!.progress, 100);
+  assert.equal(finished.output, null);
+  assert.equal(finished.cover, imageUrl);
+  assert.equal(finished.scenes.find((scene) => scene.kind === "video")!.status, "ready");
+});
+
+test("paid quotes cannot authorize a different production target", async (t) => {
+  const { repository } = await fixture(t, paidOnlyOptions);
+  const planned = await plannedProject(repository);
+  const frames = await repository.prepareQuote(planned.id, { target: "frames", revision: planned.revision, quality: "economy", budget: 2, selections: [] });
+  await assert.rejects(repository.startRun(frames.id, frames.revision, "frames-to-film-01", frames.quote!.id), /üretim hedefi/);
+  const film = await repository.prepareQuote(frames.id, { revision: frames.revision, quality: "economy", budget: 2, selections: [] });
+  assert.equal(film.quote!.target, "film");
+  await assert.rejects(repository.startRun(film.id, film.revision, "film-to-frames-01", film.quote!.id, { target: "frames" }), /üretim hedefi/);
+});
+
+test("paid frame runs retain budget and kill-switch safeguards", async (t) => {
+  let killed = false;
+  const { repository } = await fixture(t, { ...paidOnlyOptions, paymentsDisabled: () => killed });
+  const planned = await plannedProject(repository);
+  const low = await repository.prepareQuote(planned.id, { target: "frames", revision: planned.revision, quality: "economy", budget: 0, selections: [] });
+  assert.equal(low.quote!.withinBudget, false);
+  await assert.rejects(repository.startRun(low.id, low.revision, "frames-budget-01", low.quote!.id, { target: "frames" }), /bütçeyi/);
+  const enough = await repository.prepareQuote(low.id, { target: "frames", revision: low.revision, quality: "economy", budget: 1, selections: [] });
+  killed = true;
+  await assert.rejects(repository.startRun(enough.id, enough.revision, "frames-killed-01", enough.quote!.id, { target: "frames" }), /durdur|kapalı|KADRA_KILL_SWITCH/i);
+  assert.equal((await repository.getProject(enough.id)).ledger.length, 0);
+});
+
+test("storyboard import preserves cinematic production settings", async (t) => {
+  const { repository } = await fixture(t);
+  const project = await repository.importStoryboard({ title: "Sinema", style: "Sinematik", aspectRatio: "16:9", budget: null, genre: "drama", look: "noir", brief: "Sert gölgeler.", shots: [{ id: "01", durationSec: 5, visualSummary: "Gece sokağı.", aiPrompt: "A dark street at night." }] });
+  assert.equal(project.genre, "drama");
+  assert.equal(project.look, "noir");
+  assert.equal(project.brief, "Sert gölgeler.");
 });

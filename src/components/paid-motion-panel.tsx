@@ -56,10 +56,10 @@ export default function PaidMotionPanel({ project, providers, videoModels, disab
   const quotedRefFrames = Boolean(quote?.lines.some((line) => line.kind === "image") || quote?.reused.some((line) => line.kind === "image"));
 
   // The quote only applies to the settings it was made for; any local change asks for a new one.
-  const dirty = useMemo(() => quality !== project.quality || parsedBudget !== project.budget || referenceFrames !== quotedRefFrames || (frameModel || null) !== project.frameModel || videoScenes.some((scene) => {
+  const dirty = useMemo(() => (quote !== null && quote.target !== "film") || quality !== project.quality || parsedBudget !== project.budget || referenceFrames !== quotedRefFrames || (frameModel || null) !== project.frameModel || videoScenes.some((scene) => {
     const local = selection[scene.id];
     return Boolean(local?.ai) !== (scene.motion === "ai") || (local?.ai && (local.model ?? null) !== scene.videoModel);
-  }), [quality, parsedBudget, referenceFrames, quotedRefFrames, frameModel, selection, project.quality, project.budget, project.frameModel, videoScenes]);
+  }), [quote, quality, parsedBudget, referenceFrames, quotedRefFrames, frameModel, selection, project.quality, project.budget, project.frameModel, videoScenes]);
   const preview = useMemo(() => (quote && !dirty ? buildShotPreview(project) : []), [quote, dirty, project]);
 
   useEffect(() => {
@@ -93,40 +93,40 @@ export default function PaidMotionPanel({ project, providers, videoModels, disab
 
   return <section className="paid-panel" aria-labelledby="paid-panel-title">
     <div className="paid-panel-heading">
-      <div><span className="studio-eyebrow">ÜCRETLİ · GMI</span><h3 id="paid-panel-title">Yapay zekâ kare ve video üretimi</h3><p>İstediğin kare ve video modellerini doğrudan seç. Seçtiğin çekimler gerçek videoya dönüşür; başlangıç karesi henüz yoksa üretim sırasında otomatik hazırlanır. Teklifi onaylamadan hiçbir ücret oluşmaz.</p></div>
-      <span className="paid-spend"><Receipt size={14} /> Harcanan <strong>{usd(spent)}</strong>{project.budget !== null ? <> / {usd(project.budget)}</> : null}</span>
+      <div><h2 id="paid-panel-title">Filmi üret</h2><p className="quiet">Kareler ve videolar çizilir, sonra tek filmde birleşir. Fiyatı görüp onaylamadan ücret oluşmaz.</p></div>
+      <span className="paid-spend"><Receipt size={14} /> <strong>{usd(spent)}</strong>{project.budget !== null ? <> / {usd(project.budget)}</> : null}</span>
     </div>
 
-    {!providers.gmi ? <div className="studio-local-notice"><Info size={15} /><p>GMI anahtarı tanımlı değil. Proje klasöründeki .env.local dosyasına GMI_API_KEY ekleyip sunucuyu yeniden başlatın.</p></div> : !videoScenes.length ? <p className="paid-empty">Önce video çekimleri içeren bir plan hazırlayın.</p> : <>
+    {!providers.gmi ? <p className="note note-warn"><Info size={15} />GMI bağlı değil. .env.local dosyasına GMI_API_KEY ekleyip sunucuyu yeniden başlat.</p> : !videoScenes.length ? <p className="paid-empty">Filmde görüntülü sahne yok.</p> : <>
       <fieldset className="paid-tiers" disabled={disabled || busy !== null}>
         <legend>Kalite seviyesi</legend>
         {TIERS.map((tier) => <button key={tier.id} type="button" className={quality === tier.id ? "is-selected" : ""} aria-pressed={quality === tier.id} onClick={() => setQuality(tier.id)}><strong>{tier.label}</strong><span>{tier.hint}</span></button>)}
       </fieldset>
 
-      <div className="paid-scene is-on" style={{ marginBottom: 10 }}>
-        <label><input type="checkbox" name="referenceFrames" checked readOnly disabled /><span><strong>Sahne kareleri GMI ile üretilir ve onaylı karakter/mekân sayfaları referans verilir ({videoScenes.length} çekim, {refSceneIds.size} referanslı)</strong><small>Her kare GMI görsel modeliyle üretilir. Onaylı sayfası olan çekimlerde sayfalar referans verilir; süreklilik için aynı mekânın önceki karesi de eklenir.</small></span></label>
-        <select aria-label="Kare modeli" name="frameModel" value={frameModel} disabled={disabled || busy !== null} onChange={(event) => setFrameModel(event.target.value)}><option value="">Otomatik · en ucuz uygun kare modeli</option>{FRAME_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select>
-      </div>
-
-      {project.narration.engine === "gmi" ? <p className="paid-note"><ShieldCheck size={13} /> Dış ses MiniMax Türkçe sesiyle bu teklife dahil edilir (karakter başına fiyat). Ayarı Seslendirme sekmesinden değiştirebilirsin.</p> : null}
-
+      <details className="paid-models">
+        <summary>Model seçimi <span className="quiet">Otomatik: her sahne için seviyene uyan en ucuz model</span></summary>
+        <div className="paid-scene">
+          <span><strong>Kareler</strong><small>{videoScenes.length} sahne, {refSceneIds.size} tanesinde onaylı oyuncu referansı</small></span>
+          <select aria-label="Kare modeli" name="frameModel" value={frameModel} disabled={disabled || busy !== null} onChange={(event) => setFrameModel(event.target.value)}><option value="">Otomatik</option>{FRAME_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select>
+        </div>
       <div className="paid-scenes">{videoScenes.map((scene) => {
         const local = selection[scene.id] ?? { ai: true, model: null };
-        const frameHint = scene.imageSource === "generated" ? " · mevcut kare hazır" : " · önce GMI ile karesi üretilir";
-        return <div key={scene.id} className="paid-scene is-on">
-          <label><input type="checkbox" name={`scene-${scene.id}`} aria-label={`${scene.title} çekimi GMI ile hareketlendirilir`} checked readOnly disabled /><span><strong>{scene.order.toString().padStart(2, "0")} · {scene.title}</strong><small>{scene.duration} sn{frameHint}</small></span></label>
-          <select aria-label={`${scene.title} için model`} name={`model-${scene.id}`} value={local.model ?? ""} disabled={disabled || busy !== null} onChange={(event) => setSelection({ ...selection, [scene.id]: { ai: true, model: event.target.value || null } })}><option value="">Otomatik · en ucuz uygun</option>{videoModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select>
+        return <div key={scene.id} className="paid-scene">
+          <span><strong>{scene.order.toString().padStart(2, "0")} {scene.title}</strong><small>{scene.duration} sn{scene.imageSource === "generated" ? ", karesi hazır" : ""}</small></span>
+          <select aria-label={`${scene.title} için video modeli`} name={`model-${scene.id}`} value={local.model ?? ""} disabled={disabled || busy !== null} onChange={(event) => setSelection({ ...selection, [scene.id]: { ai: true, model: event.target.value || null } })}><option value="">Otomatik</option>{videoModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select>
         </div>;
       })}</div>
+      </details>
+      {project.narration.engine === "gmi" ? <p className="paid-note"><ShieldCheck size={13} /> Dış ses de bu teklife dahil.</p> : null}
 
       <div className="paid-actions">
-        <label className="paid-budget"><span>Proje bütçesi</span><input type="number" name="budget" min={0} max={100000} step="0.5" inputMode="decimal" value={budget} disabled={disabled || busy !== null} onChange={(event) => setBudget(event.target.value)} /><span>USD</span></label>
-        <button type="button" className="studio-button studio-button-secondary" disabled={disabled || busy !== null} onClick={() => void requestQuote()}>{busy === "quote" ? <LoaderCircle size={14} className="studio-spin" /> : <Sparkles size={14} />} {busy === "quote" ? "Canlı fiyatlar alınıyor…" : quote && !dirty ? "Teklifi yenile" : "Fiyat teklifi al"}</button>
+        <label className="paid-budget"><span>Bütçe tavanı</span><input type="number" name="budget" min={0} max={100000} step="0.5" inputMode="decimal" value={budget} disabled={disabled || busy !== null} onChange={(event) => setBudget(event.target.value)} /><span>USD</span></label>
+        <button type="button" className="button" disabled={disabled || busy !== null} onClick={() => void requestQuote()}>{busy === "quote" ? <LoaderCircle size={14} className="spin" /> : <Sparkles size={14} />} {busy === "quote" ? "Fiyatlar alınıyor…" : quote && !dirty ? "Fiyatı yenile" : "Fiyatı gör"}</button>
       </div>
 
       {quote && !dirty ? <div className="paid-quote">
         <table>
-          <thead><tr><th>Çekim</th><th>Seçilen model</th><th>Süre</th><th>Tahmin</th><th>Karşılaştırma</th></tr></thead>
+          <thead><tr><th>Sahne</th><th>Model</th><th>Ne</th><th>Fiyat</th><th>Seçenekler</th></tr></thead>
           <tbody>{quote.lines.map((line) => <tr key={`${line.sceneId}-${line.kind ?? "video"}`}>
             <td>{line.title}</td>
             <td><strong>{line.modelLabel}</strong><small>{line.reason}</small></td>
@@ -142,45 +142,46 @@ export default function PaidMotionPanel({ project, providers, videoModels, disab
           </tr>)}</tbody>
         </table>
         {!quote.lines.length && quote.reused.length ? <p className="paid-empty">Seçtiğin her çekim bu kare ve hareketle zaten üretilmiş; yeni ücret gerekmiyor. Onayladığında mevcut videolar yeniden kullanılır.</p> : null}
+        {quote.warnings.length ? <ul className="warnings" aria-label="Dikkat">{quote.warnings.map((item) => <li key={item}><TriangleAlert size={13} />{item}</li>)}</ul> : null}
         {quote.errors.length ? <ul className="paid-errors">{quote.errors.map((item) => <li key={item}><TriangleAlert size={12} /> {item}</li>)}</ul> : null}
         <div className="paid-total">
-          <span>Toplam tahmin <strong>{usd(quote.total)}</strong></span>
+          <span>Toplam <strong>{usd(quote.total)}</strong></span>
           <span>Kalan bütçe {usd(Math.max(0, quote.remaining))}</span>
           <span>{expired ? "Teklifin süresi doldu" : `Geçerlilik: ${Math.max(1, Math.ceil((Date.parse(quote.expiresAt) - now) / 60_000))} dk`}</span>
         </div>
         {preview.length ? <details className="paid-preview">
-          <summary style={{ cursor: "pointer", fontSize: 10, color: "#b9b4f6" }}>Çekim özeti: gidecek promptlar ve referanslar ({preview.length})</summary>
-          <div style={{ display: "grid", gap: 10, maxHeight: 340, overflow: "auto", marginTop: 8 }}>
-            {preview.map((line) => <article key={line.sceneId} style={{ borderTop: "1px solid #2f3141", paddingTop: 8 }}>
-              <strong style={{ fontSize: 11, color: "#e7e8f3" }}>{line.title}</strong>
-              {line.frame ? <div style={{ marginTop: 6 }}>
-                <small style={{ display: "block", fontSize: 9, color: "#8d91a3" }}>Kare · {line.frame.modelLabel}{line.frame.truncated ? " · kısaltıldı" : ""}</small>
-                {line.frame.references.length ? <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "6px 0" }}>{line.frame.references.map((reference, index) => <figure key={`${reference.url}-${index}`} style={{ margin: 0, width: 56 }}><img src={reference.url} alt={reference.name} style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 4, background: "#121513" }} /><figcaption style={{ fontSize: 8, lineHeight: 1.3, color: "#8d91a3" }}>{reference.name}</figcaption></figure>)}</div> : <p className="paid-note">Referans görsel yok; kare yalnızca metinden üretilecek.</p>}
-                <p style={{ fontSize: 9, lineHeight: 1.6, color: "#a9adc0", margin: "6px 0", wordBreak: "break-word" }}>{line.frame.prompt}</p>
+          <summary>Modellere gidecek tarifler ve referanslar ({preview.length})</summary>
+          <div className="preview-list">
+            {preview.map((line) => <article key={line.sceneId}>
+              <strong>{line.title}</strong>
+              {line.frame ? <div>
+                <small>Kare, {line.frame.modelLabel}{line.frame.truncated ? " (kısaltıldı)" : ""}</small>
+                {line.frame.references.length ? <div className="preview-refs">{line.frame.references.map((reference, index) => <figure key={`${reference.url}-${index}`}><img src={reference.url} alt={reference.name} /><figcaption>{reference.name}</figcaption></figure>)}</div> : <p className="paid-note">Referans görsel yok; kare yalnızca metinden çizilir.</p>}
+                <p className="prompt-text">{line.frame.prompt}</p>
               </div> : null}
-              {line.video ? <div style={{ marginTop: 6 }}>
-                <small style={{ display: "block", fontSize: 9, color: "#8d91a3" }}>Video · {line.video.modelLabel}{line.video.truncated ? " · kısaltıldı" : ""}</small>
-                <p style={{ fontSize: 9, lineHeight: 1.6, color: "#a9adc0", margin: "6px 0", wordBreak: "break-word" }}>{line.video.prompt}</p>
+              {line.video ? <div>
+                <small>Video, {line.video.modelLabel}{line.video.truncated ? " (kısaltıldı)" : ""}</small>
+                <p className="prompt-text">{line.video.prompt}</p>
               </div> : null}
               {line.warnings.map((warning) => <p key={warning} className="paid-errors"><TriangleAlert size={12} /> {warning}</p>)}
             </article>)}
           </div>
         </details> : null}
-        <p className="paid-note"><ShieldCheck size={13} /> Onaylarsan çekimlerin kareleri GMI depolamasına yüklenir (herkese açık ama tahmin edilemez bir adres). Tahminler GMI&apos;ın canlı fiyatlarıdır; belirsiz durumda yüksek fiyat varsayılır. Bir gönderimin sonucu belirsiz kalırsa istek tekrar gönderilmez; üretim durur ve teklifi yenileyip yeniden başlatabilirsin.</p>
-        <button type="button" className="studio-button studio-button-primary" disabled={disabled || busy !== null || expired || !quote.withinBudget} onClick={() => void approve()}>{busy === "start" ? <LoaderCircle size={14} className="studio-spin" /> : <Check size={14} />} {quote.withinBudget ? `Onayla ve üret · ${usd(quote.total)}` : "Bütçe veya model uygun değil"}</button>
-      </div> : quote && dirty ? <p className="paid-empty">Ayarlar değişti; onaylamadan önce teklifi güncelle.</p> : null}
+        <p className="paid-note"><ShieldCheck size={13} /> Fiyatlar GMI&apos;ın canlı fiyatlarıdır; emin olunamayan durumda yüksek olan alınır. Sonucu belirsiz kalan bir istek asla ikinci kez gönderilmez.</p>
+        <button type="button" className="button button-lamp" disabled={disabled || busy !== null || expired || !quote.withinBudget} onClick={() => void approve()}>{busy === "start" ? <LoaderCircle size={14} className="spin" /> : <Check size={14} />} {quote.withinBudget ? `Onayla ve üret, ${usd(quote.total)}` : "Bütçe ya da model uygun değil"}</button>
+      </div> : quote && dirty ? <p className="paid-empty">Ayarlar değişti; fiyatı yenile.</p> : null}
     </>}
 
-    {error ? <p className="studio-dialog-error" role="alert">{error}</p> : null}
+    {error ? <p className="note note-error" role="alert">{error}</p> : null}
 
-    {project.ledger.length ? <div className="paid-ledger">
-      <h4><Clapperboard size={13} /> Harcama defteri</h4>
+    {project.ledger.length ? <details className="paid-ledger">
+      <summary><Clapperboard size={13} /> Harcama kaydı ({project.ledger.length})</summary>
       <ol>{project.ledger.toReversed().slice(0, 30).map((entry) => <li key={entry.id}>
         <time>{new Date(entry.at).toLocaleString("tr-TR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</time>
         <span><strong>{entry.sceneTitle}</strong> · {entry.modelLabel}<small>{entry.note}</small></span>
         <span className={`paid-status paid-status-${entry.status}`}>{LEDGER_STATUS[entry.status]}</span>
         <strong>{usd(entry.actual ?? entry.estimate)}</strong>
       </li>)}</ol>
-    </div> : null}
+    </details> : null}
   </section>;
 }

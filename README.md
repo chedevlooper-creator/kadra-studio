@@ -33,6 +33,13 @@ Bu klasör tasarım belgelerini ve uygulamanın yerel sürümünü (Kadra Studio
 - **Kamera ve görünüm:** Kamera sözlüğü (yavaş yaklaşma, hızlı yaklaşma, el kamerası, kaydırma…) video modelinin kendi komutlarına çevrilir (`src/lib/cinema.ts`); FFmpeg kamera hareketi üretmez. Tür (Aksiyon, Epik, Dram, Komedi, Korku, Belgesel) planı ve promptları yönlendirir. Renk ve dönem görünümü (Kara film, 1960'lar, 1980'ler VHS…) montajda ücretsiz uygulanır; bunun için hiçbir kare yeniden üretilmez.
 - **Dış ses:** Çekimlerin seslendirme metinleri ya ücretsiz Mac sesiyle (Yelda) ya da teklifle alınan MiniMax Türkçe sesleriyle (1000 karakter 0,06 $) okunur. Her ses çekiminin başına yerleştirilir ve konuşma sırasında müzik otomatik kısılır. Her metin bir kez seslendirilir; ücretli ses onaylanana kadar filmde taslak Mac sesi kullanılabilir.
 
+**Higgsfield'dan esinlenen yönetmenlik araçları** (hepsi ücretsiz; hiçbiri ücretli üretim başlatmaz):
+
+- **Hazır tarzlar** (`src/lib/cinema.ts`): Sinematik dram, Anime macera, Kara film, Korku, Belgesel, Retro 80'ler, 3D çizgi film, Masal kitabı, Tanıtım filmi. Tek tıkla görsel stil, tür, renk ve proje özetini birlikte ayarlar. Ana sayfada bir tarz seçip tek cümle yazarak film başlatılır.
+- **Yönetmen asistanı** (`src/lib/assistant.ts`): "3. sahneyi daha gergin yap", "tüm sahneler gece geçsin" gibi istekleri DeepSeek (yoksa NVIDIA) ile sahne başlığı, anlatım, görsel tarif, kamera, süre, dış ses ve duygulara çevirir. Önce eski ve yeni metni gösterir; yalnızca onayınla ve tek seferde uygular. Sahne ekleyemez, silemez, para harcatamaz.
+- **Proje özeti ve duygular:** Özet (ton, yapılacaklar ve yapılmayacaklar) her kare ve videonun prompt'una eklenir. Her sahnede her oyuncunun duygusu seçilebilir; plan çıkarılırken yapay zekâ bunları kendiliğinden doldurur. İkisi de kare parmak izine girer, değişince ilgili kareler bir sonraki üretimde yeniden çizilir.
+- **Başka ekranlar için indirme** (`src/lib/formats.ts`): Hazır filmi dikey 9:16, kare 1:1 ya da Full HD yatay olarak FFmpeg ile bu bilgisayarda yeniden kadrajlar; ya tamamı görünür (bulanık dolgu) ya ortadan kırpılır. Ses aynen korunur.
+
 ## Yerelde çalıştırma
 
 Node.js 22 veya üzeri ve FFmpeg gerekir.

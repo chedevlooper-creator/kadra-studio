@@ -52,15 +52,15 @@ export default function MusicLane({ project, disabled, onProjectChange, notify }
       <label className="music-lane-control"><span>Ses {volume}%</span><input type="range" min={0} max={150} step={5} value={volume} disabled={locked} onChange={(event) => setVolume(Number(event.target.value))} /></label>
       <label className="music-lane-control"><span>Başlangıç (sn)</span><input type="number" min={0} max={Math.floor(music.duration)} step={0.5} value={offset} disabled={locked} onChange={(event) => setOffset(event.target.value)} /></label>
       <div className="music-lane-actions">
-        <button type="button" className="studio-button studio-button-secondary" disabled={locked || !dirty} onClick={() => void run("apply", () => send(`/api/projects/${project.id}/music`, json("PATCH", { revision: project.revision, volume: volume / 100, offset: Number(offset) || 0 })), "Müzik ayarları uygulandı.")}>{busy === "apply" ? <LoaderCircle size={13} className="studio-spin" /> : null} Uygula</button>
-        <button type="button" className="studio-button studio-button-secondary" disabled={locked} onClick={() => input.current?.click()}><Upload size={13} /> Değiştir</button>
-        <button type="button" className="studio-button studio-button-secondary" disabled={locked} aria-label="Müziği kaldır" onClick={() => void run("remove", () => send(`/api/projects/${project.id}/music`, json("DELETE", { revision: project.revision })), "Müzik kaldırıldı.")}>{busy === "remove" ? <LoaderCircle size={13} className="studio-spin" /> : <Trash2 size={13} />}</button>
+        <button type="button" className="button" disabled={locked || !dirty} onClick={() => void run("apply", () => send(`/api/projects/${project.id}/music`, json("PATCH", { revision: project.revision, volume: volume / 100, offset: Number(offset) || 0 })), "Müzik ayarları uygulandı.")}>{busy === "apply" ? <LoaderCircle size={13} className="spin" /> : null} Uygula</button>
+        <button type="button" className="button" disabled={locked} onClick={() => input.current?.click()}><Upload size={13} /> Değiştir</button>
+        <button type="button" className="button" disabled={locked} aria-label="Müziği kaldır" onClick={() => void run("remove", () => send(`/api/projects/${project.id}/music`, json("DELETE", { revision: project.revision })), "Müzik kaldırıldı.")}>{busy === "remove" ? <LoaderCircle size={13} className="spin" /> : <Trash2 size={13} />}</button>
       </div>
     </div> : <div className="music-lane-body">
-      <span className="music-lane-hint">MP3, M4A veya WAV ekle (en fazla 40 MB). Film varsa müzik hemen altına yerleşir; sonraki üretimlerde otomatik eklenir.</span>
-      <button type="button" className="studio-button studio-button-secondary" disabled={locked} onClick={() => input.current?.click()}>{busy === "upload" ? <LoaderCircle size={13} className="studio-spin" /> : <Upload size={13} />} {busy === "upload" ? "Yükleniyor…" : "Müzik ekle"}</button>
+      <span className="music-lane-hint">MP3, M4A ya da WAV, en fazla 40 MB. Film varsa hemen altına yerleşir.</span>
+      <button type="button" className="button" disabled={locked} onClick={() => input.current?.click()}>{busy === "upload" ? <LoaderCircle size={13} className="spin" /> : <Upload size={13} />} {busy === "upload" ? "Yükleniyor…" : "Müzik ekle"}</button>
     </div>}
     <input ref={input} type="file" accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/aac,.mp3,.m4a,.wav,.aac" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) upload(file); }} />
-    {error ? <p className="studio-dialog-error" role="alert">{error}</p> : null}
+    {error ? <p className="note note-error" role="alert">{error}</p> : null}
   </div>;
 }

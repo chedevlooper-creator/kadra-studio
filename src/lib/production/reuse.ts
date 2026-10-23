@@ -18,7 +18,7 @@ const RENDER_VERSION = 1;
 const fingerprint = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 
 /** Everything a frame or clip prompt is built from at the project level; the genre is optional for older callers. */
-type FrameSource = Pick<Project, "characters" | "style" | "aspectRatio"> & { genre?: string };
+type FrameSource = Pick<Project, "characters" | "style" | "aspectRatio"> & { genre?: string; brief?: string };
 
 /** Approved character sheets linked to a shot so the bridge can supply their images to the frame model. */
 export function approvedCharacterSheets(project: Pick<Project, "characters">, scene: Pick<Scene, "characterIds">): { character: Character; attempt: SheetAttempt; file: string }[] {

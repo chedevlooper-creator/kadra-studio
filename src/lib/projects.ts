@@ -3,13 +3,15 @@ import { copyFile, mkdir, open, readFile, readdir, rename, rm, stat, unlink } fr
 import path from "node:path";
 import { z } from "zod";
 import { existsSync } from "node:fs";
-import type { AppBootstrap, Box, Character, CharacterEstimate, ClipRecord, CreateProjectInput, ImageReview, ImageSource, LedgerEntry, MotionMode, ProductionRun, Project, ProjectOutput, ProviderStatus, QualityTier, Quote, QuoteLine, ReferencePhoto, RepairEstimate, ReusedLine, RunEvent, RunStep, SheetAttempt, SheetVerdict, Soundtrack } from "./types";
+import type { AppBootstrap, AssistantProjectPatch, AssistantProposal, Box, Character, CharacterEstimate, ClipRecord, CreateProjectInput, ImageReview, ImageSource, LedgerEntry, MotionMode, ProductionRun, Project, ProjectOutput, ProviderStatus, QualityTier, Quote, QuoteLine, ReferencePhoto, RepairEstimate, ReusedLine, RunEvent, RunStep, Scene, SheetAttempt, SheetVerdict, Soundtrack } from "./types";
 import { projectMediaDirectory } from "./media";
+import { ASSISTANT_SCENE_FIELDS, assistantInstructions, parseAssistantReply } from "./assistant";
 import { approvedCharacterSheets, continuityFrame, frameIsCurrent, frameKeys, keptClips, REPAIR_LABEL, REPAIR_MODEL, reusableClip } from "./production/reuse";
 import { voiceFile, voiceKey } from "./production/narration";
 import { chooseFrameModel, frameModel } from "./routing/frame-router";
 import { DEFAULT_NARRATION, narrationText, VOICE_LABEL, VOICE_MODEL } from "./voices";
 import { mentionsCharacter, modelCatalog, newCharacter, parseScript, planScenes, scenesFromAiPlan, scenesFromStoryboard, scriptFromStoryboard, TITLE_MODEL, VIDEO_MODEL, type StoryboardShot } from "./planner";
+import type { EnhancedShot, PromptEnhanceRequest } from "./providers/deepseek";
 import type { AiPlan, PlanRequest } from "./providers/nvidia";
 import { chooseVideoModel, TIER_MIN_QUALITY, VIDEO_MODELS, type PriceRule } from "./routing/video-router";
 import { AppError, createProjectSchema, idempotencySchema, idSchema, parseInput, revisionSchema, scenePatchSchema, updateProjectSchema } from "./validation";
@@ -37,10 +39,11 @@ const runRecordSchema = z.object({
   progress: z.number().min(0).max(100), cost: z.number().min(0), events: z.array(eventSchema).max(MAX_EVENTS), steps: z.array(stepSchema).max(200),
 }).strict();
 const sceneRecordSchema = z.object({
-  id: idSchema, order: z.number().int().min(1).max(40), title: z.string(), description: z.string(), prompt: z.string(), motionPrompt: z.string(), duration: z.number().int().min(2).max(30),
+  id: idSchema, order: z.number().int().min(1).max(40), title: z.string(), description: z.string(), prompt: z.string(), promptEn: z.string().max(4_000).default(""), promptEnSource: z.string().default(""), motionPrompt: z.string(), duration: z.number().int().min(2).max(30),
   camera: z.string(), model: z.string(), modelReason: z.string(), kind: z.enum(["video", "title"]), status: z.enum(["draft", "queued", "running", "ready", "failed"]),
   image: z.string(), imageSource: z.enum(["reference", "generated"]), review: z.object({ ok: z.boolean(), note: z.string(), issues: z.array(issueSchema).max(6).default([]) }).strict().nullable(),
   frameKey: z.string().max(40).default(""), frameModel: z.string().max(80).default(""),
+  emotions: z.record(z.string().max(20), z.string().max(24)).default({}),
   repair: z.object({ previous: z.string(), box: boxSchema, instruction: z.string().max(600), at: z.string().datetime(), cost: z.number().min(0) }).strict().nullable().default(null),
   characterIds: z.array(z.string().max(20)).max(12), narration: z.string(), notes: z.array(z.string()),
   motion: z.enum(["free", "ai"]).default("free"), videoModel: z.string().max(80).nullable().default(null),
@@ -49,7 +52,7 @@ const sceneRecordSchema = z.object({
 const priceSchema = z.object({ label: z.string(), estimate: z.number().min(0) }).strict();
 const verdictSchema = z.object({ ok: z.boolean(), scores: z.object({ style: z.number(), traits: z.number(), pose: z.number(), clean: z.number() }).strict(), note: z.string().max(600), issues: z.array(issueSchema).max(6).default([]) }).strict();
 const characterSchema = z.object({
-  id: z.string().max(20), kind: z.enum(["person", "place"]).default("person"), name: z.string().max(80), appearance: z.string().max(1_200),
+  id: z.string().max(20), kind: z.enum(["person", "place"]).default("person"), framing: z.enum(["auto", "sheet", "free"]).default("auto"), name: z.string().max(80), appearance: z.string().max(1_200),
   aliases: z.array(z.string().max(80)).max(12).default([]), style: z.string().max(400).default(""),
   reference: z.object({ source: z.enum(["wikimedia", "upload", "openverse", "web"]), title: z.string().max(300), pageUrl: z.string().max(600).nullable(), file: z.string().regex(/^ref-[a-zA-Z0-9_-]+\.(jpg|png)$/), author: z.string().max(300), license: z.string().max(120), licenseUrl: z.string().max(400).nullable(), addedAt: z.string().datetime() }).strict().nullable().default(null),
   sheet: z.object({
@@ -59,10 +62,11 @@ const characterSchema = z.object({
   }).strict().default({ status: "none", attempts: [], chosen: null, note: "" }),
 }).strict();
 const quoteSchema = z.object({
+  target: z.enum(["frames", "film"]).default("film"),
   id: idSchema, createdAt: z.string().datetime(), expiresAt: z.string().datetime(), quality: z.enum(["economy", "balanced", "best"]), fingerprint: z.string(),
   lines: z.array(z.object({ sceneId: idSchema, title: z.string(), kind: z.enum(["video", "image", "voice"]).default("video"), modelId: z.string(), modelLabel: z.string(), billedSeconds: z.number().min(0), estimate: z.number().min(0), reason: z.string(), alternative: priceSchema.nullable(), priciest: priceSchema.nullable() }).strict()).max(80),
   reused: z.array(z.object({ sceneId: idSchema, title: z.string(), kind: z.enum(["video", "image", "voice"]), modelLabel: z.string(), saved: z.number().min(0) }).strict()).max(80).default([]),
-  errors: z.array(z.string()).max(40), total: z.number().min(0), budget: z.number().min(0), committed: z.number().min(0), remaining: z.number(), withinBudget: z.boolean(),
+  errors: z.array(z.string()).max(40), warnings: z.array(z.string()).max(40).default([]), total: z.number().min(0), budget: z.number().min(0), committed: z.number().min(0), remaining: z.number(), withinBudget: z.boolean(),
 }).strict();
 const ledgerSchema = z.object({
   id: idSchema, at: z.string().datetime(), runId: idSchema, sceneId: z.string().max(80), sceneTitle: z.string(), provider: z.literal("GMI"), kind: z.enum(["video", "image", "voice"]).default("video"), model: z.string(), modelLabel: z.string(),
@@ -74,7 +78,7 @@ const projectRecordSchema = createProjectSchema.extend({
   characters: z.array(characterSchema).max(12),
   scenes: z.array(sceneRecordSchema).max(40), run: runRecordSchema.nullable(),
   output: z.object({ runId: idSchema, url: z.string(), duration: z.number().min(0), createdAt: z.string().datetime() }).strict().nullable(), isExample: z.boolean(),
-  genre: z.string().max(40).default(""), look: z.string().max(40).default("none"),
+  genre: z.string().max(40).default(""), look: z.string().max(40).default("none"), brief: z.string().max(1_500).default(""),
   quality: z.enum(["economy", "balanced", "best"]).default("economy"), quote: quoteSchema.nullable().default(null), ledger: z.array(ledgerSchema).max(500).default([]),
   music: z.object({ file: z.string().regex(/^music-[a-zA-Z0-9_-]+\.(mp3|m4a|wav|aac)$/), name: z.string().max(200), duration: z.number().min(0), volume: z.number().min(0).max(2), offset: z.number().min(0) }).strict().nullable().default(null),
   frameModel: z.string().max(80).nullable().default(null),
@@ -93,7 +97,7 @@ type ScenePatch = z.infer<typeof scenePatchSchema>;
 
 type LedgerUpdate = { status: "charged" | "failed" | "released"; note: string };
 export type StepResult =
-  | { kind: "image"; url: string; source: ImageSource; review: ImageReview | null; note: string; frameKey?: string; frameModel?: string; ledger?: LedgerUpdate }
+  | { kind: "image"; url: string; source: ImageSource; review: ImageReview | null; note: string; frameKey?: string; frameModel?: string; promptEn?: string; promptEnSource?: string; motionPrompt?: string; ledger?: LedgerUpdate }
   | { kind: "clip" | "title"; note: string }
   | { kind: "video"; note: string; ledger: LedgerUpdate; clip?: Omit<ClipRecord, "createdAt"> }
   | { kind: "montage"; url: string; duration: number; note: string }
@@ -104,6 +108,8 @@ export type StepResult =
 export interface RepositoryOptions {
   providers?: () => Promise<ProviderStatus>;
   aiPlanner?: (request: PlanRequest) => Promise<AiPlan>;
+  /** Background prompt enhancer (DeepSeek) that turns Turkish/colloquial shot descriptions into cinematic English prompts. */
+  promptEnhancer?: (request: PromptEnhanceRequest) => Promise<EnhancedShot[]>;
   /** Live per-model prices for paid video; quotes are refused when this is missing or fails. */
   videoPrices?: () => Promise<ReadonlyMap<string, PriceRule>>;
   /** Live price of one reference-guided character image (USD). */
@@ -114,6 +120,8 @@ export interface RepositoryOptions {
   framePrices?: () => Promise<ReadonlyMap<string, number>>;
   /** Live price of paid narration, USD per 1,000 characters. */
   voicePrice?: () => Promise<number>;
+  /** Answers the director assistant's brief with JSON text; refused when no planner model is connected. */
+  assistant?: (prompt: string) => Promise<string>;
   /** Ceiling for paid spend across every project, in USD; null means no extra ceiling. */
   spendLimit?: () => number | null;
   /** Emergency stop: while true, no paid request may be reserved or sent. */
@@ -129,7 +137,7 @@ export interface RepairInput {
   maxCost: number;
 }
 
-export interface CharacterInput { name: string; appearance: string; aliases: string[]; style: string; kind?: Character["kind"] }
+export interface CharacterInput { name: string; appearance: string; aliases: string[]; style: string; kind?: Character["kind"]; framing?: Character["framing"] }
 
 /** Every sheet is drawn by the paid reference model. In paid-only mode even description-only characters are paid. */
 export function estimateCharacters(project: Pick<Project, "characters" | "budget" | "ledger">, characterIds: string[], providers: ProviderStatus, unitPrice: number | null, engineOverride: "auto" | "nano-banana" = "auto", paidOnly = false): CharacterEstimate {
@@ -154,6 +162,7 @@ export function estimateCharacters(project: Pick<Project, "characters" | "budget
 }
 
 export interface QuoteInput {
+  target?: "frames" | "film";
   revision: number;
   quality: QualityTier;
   budget: number | null;
@@ -176,6 +185,7 @@ export function committedSpend(ledger: LedgerEntry[]): number {
  */
 function quoteFingerprint(project: Pick<Project, "aspectRatio" | "quality" | "budget" | "scenes"> & {
   genre?: string;
+  brief?: string;
   narration?: Project["narration"];
   characters?: Project["characters"];
   frameModel?: string | null;
@@ -185,22 +195,33 @@ function quoteFingerprint(project: Pick<Project, "aspectRatio" | "quality" | "bu
     character.sheet.status, character.sheet.chosen, character.sheet.attempts.map((attempt) => attempt.id),
   ]);
   const material = JSON.stringify([
-    project.aspectRatio, project.quality, project.budget, project.genre ?? "", project.narration ?? null, project.frameModel ?? null, characters,
-    project.scenes.map((scene) => [scene.id, scene.order, scene.kind, scene.duration, scene.motion, scene.videoModel, scene.prompt, scene.motionPrompt, scene.camera, scene.image, scene.frameKey, scene.narration]),
+    project.aspectRatio, project.quality, project.budget, project.genre ?? "", project.brief ?? "", project.narration ?? null, project.frameModel ?? null, characters,
+    project.scenes.map((scene) => [scene.id, scene.order, scene.kind, scene.duration, scene.motion, scene.videoModel, scene.prompt, scene.promptEn, scene.motionPrompt, scene.camera, scene.image, scene.frameKey, scene.narration, scene.emotions]),
   ]);
   return createHash("sha256").update(material).digest("hex");
 }
 
+/** Characters and places that appear in video shots without an approved sheet: their shots are drawn from words alone, so likeness drifts. */
+export function referenceWarnings(characters: Character[], scenes: Project["scenes"]): string[] {
+  const shots = scenes.filter((scene) => scene.kind === "video");
+  return characters.flatMap((character) => {
+    if (character.sheet.status === "approved") return [];
+    const count = shots.filter((scene) => scene.characterIds.includes(character.id)).length;
+    return count ? [`${character.name}: ${count} sahnede onaylı ${character.kind === "place" ? "mekân görseli" : "karakter sayfası"} yok; bu karelerde ${character.kind === "place" ? "mekân" : "yüz ve görünüş"} yalnızca yazıdan çizilir ve tutarsız olabilir.`] : [];
+  });
+}
+
 export function buildQuote(
-  project: Pick<Project, "aspectRatio" | "quality" | "budget" | "scenes" | "ledger"> & Partial<Pick<Project, "characters" | "style" | "clips" | "genre" | "narration">>,
+  project: Pick<Project, "aspectRatio" | "quality" | "budget" | "scenes" | "ledger"> & Partial<Pick<Project, "characters" | "style" | "clips" | "genre" | "brief" | "narration">>,
   prices: ReadonlyMap<string, PriceRule>,
   now = new Date(),
   frames?: { enabled: boolean; prices: ReadonlyMap<string, number> | null; override?: string | null },
   /** Whether a file exists in the project's media folder (paths relative to it, e.g. "clips/clip-….mp4"). */
   exists: (file: string) => boolean = () => true,
   voicePrice: number | null = null,
+  target: "frames" | "film" = "film",
 ): Quote {
-  const source = { characters: project.characters ?? [], style: project.style ?? "", genre: project.genre ?? "", aspectRatio: project.aspectRatio, clips: project.clips ?? [], scenes: project.scenes };
+  const source = { characters: project.characters ?? [], style: project.style ?? "", genre: project.genre ?? "", brief: project.brief ?? "", aspectRatio: project.aspectRatio, clips: project.clips ?? [], scenes: project.scenes };
   const lines: QuoteLine[] = [];
   const reused: ReusedLine[] = [];
   const errors: string[] = [];
@@ -234,7 +255,7 @@ export function buildQuote(
         });
       }
     }
-    if (scene.motion !== "ai") continue;
+    if (target === "frames" || scene.motion !== "ai") continue;
     const route = chooseVideoModel({ duration: scene.duration, aspectRatio: project.aspectRatio, tier: project.quality, override: scene.videoModel }, prices);
     const earlier = frameChanges ? null : reusableClip(source, scene, project.quality);
     if (earlier && exists(`clips/${earlier.file}`)) {
@@ -251,7 +272,7 @@ export function buildQuote(
     });
   }
   // Paid narration is priced per character; a line already spoken with the same voice is reused.
-  if (project.narration?.engine === "gmi") {
+  if (target === "film" && project.narration?.engine === "gmi") {
     for (const scene of project.scenes) {
       const text = narrationText(scene);
       if (!text) continue;
@@ -267,8 +288,8 @@ export function buildQuote(
   const budget = project.budget ?? 0;
   const remaining = money(budget - committed);
   return {
-    id: randomUUID(), createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + QUOTE_TTL_MS).toISOString(), quality: project.quality, fingerprint: quoteFingerprint(project),
-    lines, reused, errors, total, budget, committed, remaining, withinBudget: project.budget !== null && lines.length > 0 && errors.length === 0 && total <= remaining,
+    target, id: randomUUID(), createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + QUOTE_TTL_MS).toISOString(), quality: project.quality, fingerprint: quoteFingerprint(project),
+    lines, reused, errors, warnings: referenceWarnings(project.characters ?? [], project.scenes), total, budget, committed, remaining, withinBudget: project.budget !== null && lines.length > 0 && errors.length === 0 && total <= remaining,
   };
 }
 
@@ -284,7 +305,7 @@ function pushEvent(run: NonNullable<StoredProject["run"]>, message: string, kind
 }
 
 function makeProject(input: CreateProjectInput, now: string): StoredProject {
-  return { ...input, genre: input.genre ?? "", look: input.look ?? "none", id: randomUUID(), description: input.script.trim().slice(0, 160), duration: 0, status: "draft", cover: "/images/mountains.jpg", createdAt: now, updatedAt: now, revision: 1, planner: "heuristic", planNote: "", characters: [], scenes: [], run: null, output: null, quality: "economy", quote: null, ledger: [], music: null, narration: DEFAULT_NARRATION, clips: [], frameModel: null, isExample: false };
+  return { ...input, genre: input.genre ?? "", look: input.look ?? "none", brief: input.brief ?? "", id: randomUUID(), description: input.script.trim().slice(0, 160), duration: 0, status: "draft", cover: "/images/mountains.jpg", createdAt: now, updatedAt: now, revision: 1, planner: "heuristic", planNote: "", characters: [], scenes: [], run: null, output: null, quality: "economy", quote: null, ledger: [], music: null, narration: DEFAULT_NARRATION, clips: [], frameModel: null, isExample: false };
 }
 
 function seedDatabase(): Database {
@@ -539,6 +560,74 @@ export function createProjectRepository(directory: string, options: RepositoryOp
     return project.ledger.find((entry) => entry.id === ledgerId);
   }
 
+  /**
+   * Runs outside the file lock so slow AI calls never hold `projects.lock`.
+   * Upgrades any video scene whose English prompt is missing or out of sync with `scene.prompt`.
+   */
+  async function enhanceScenesOutsideLock(
+    project: Pick<Project, "style" | "aspectRatio" | "genre" | "characters">,
+    scenes: Scene[],
+  ): Promise<Map<string, { promptEn: string; promptEnSource: string; motionPrompt: string }>> {
+    const updates = new Map<string, { promptEn: string; promptEnSource: string; motionPrompt: string }>();
+    if (!options.promptEnhancer) return updates;
+    const pending = scenes.filter((scene) => scene.kind === "video" && (!scene.promptEn || scene.promptEnSource !== scene.prompt));
+    if (!pending.length) return updates;
+    try {
+      const enhanced = await options.promptEnhancer({
+        style: project.style,
+        aspectRatio: project.aspectRatio,
+        genre: project.genre,
+        shots: pending.map((scene) => ({
+          id: scene.id,
+          title: scene.title,
+          description: scene.description,
+          prompt: scene.prompt,
+          motionPrompt: scene.motionPrompt,
+          camera: scene.camera,
+          characters: project.characters
+            .filter((character) => scene.characterIds.includes(character.id))
+            .map((character) => ({ name: character.name, appearance: character.appearance, kind: character.kind })),
+        })),
+      });
+      const sourceById = new Map(pending.map((scene) => [scene.id, scene.prompt]));
+      for (const item of enhanced) {
+        const promptEnSource = sourceById.get(item.id);
+        if (promptEnSource !== undefined && item.imagePrompt) {
+          updates.set(item.id, {
+            promptEn: item.imagePrompt.slice(0, 4_000),
+            promptEnSource,
+            motionPrompt: item.motionPrompt,
+          });
+        }
+      }
+    } catch {
+      // Background prompt enhancement is best-effort and never blocks the user's save, plan, or quote.
+    }
+    return updates;
+  }
+
+  /** The one place a shot is edited. Returns whether the picture it describes changed, which makes any generated frame stale. */
+  function applyScenePatch(project: StoredProject, scene: Scene, patch: ScenePatch): boolean {
+    const changed = (patch.prompt !== undefined && patch.prompt !== scene.prompt) || (patch.description !== undefined && patch.description !== scene.description);
+    Object.assign(scene, patch);
+    // A feeling only belongs to a person who is in this shot.
+    scene.emotions = Object.fromEntries(Object.entries(scene.emotions ?? {}).filter(([who, feeling]) => feeling && scene.characterIds.includes(who) && project.characters.find((character) => character.id === who)?.kind !== "place"));
+    if (changed) { scene.promptEn = ""; scene.promptEnSource = ""; }
+    if (patch.kind || scene.model === VIDEO_MODEL || LEGACY_VIDEO_MODELS.includes(scene.model) || scene.model === "FFmpeg yazı kartı") { scene.model = (patch.kind ?? scene.kind) === "title" ? TITLE_MODEL : VIDEO_MODEL; }
+    if (changed && scene.imageSource === "generated") { scene.imageSource = "reference"; scene.review = null; scene.repair = null; }
+    return changed;
+  }
+
+  function applySceneEnhancements(scenes: Scene[], updates: ReadonlyMap<string, { promptEn: string; promptEnSource: string; motionPrompt: string }>) {
+    for (const scene of scenes) {
+      const item = updates.get(scene.id);
+      if (!item || scene.prompt !== item.promptEnSource) continue;
+      scene.promptEn = item.promptEn;
+      scene.promptEnSource = item.promptEnSource;
+      if (item.motionPrompt) scene.motionPrompt = item.motionPrompt;
+    }
+  }
+
   return {
     directory,
     mediaDirectory,
@@ -580,14 +669,14 @@ export function createProjectRepository(directory: string, options: RepositoryOp
     planProject: async (id: string, revision: number, mode: "auto" | "heuristic" = "auto"): Promise<Project> => {
       const snapshot = await transaction((database) => {
         const project = find(database, id); checkRevision(project, revision); requireIdle(project); parseScript(project.script);
-        return { script: project.script, style: project.style, aspectRatio: project.aspectRatio, genre: project.genre, cover: project.cover };
+        return { script: project.script, style: project.style, aspectRatio: project.aspectRatio, genre: project.genre, brief: project.brief, cover: project.cover };
       });
       const status = await providers();
       const useAi = mode === "auto" && Boolean(options.aiPlanner) && Boolean(status.deepseek || status.nvidia);
       let plan: Pick<Project, "planner" | "planNote" | "characters" | "scenes">;
       if (useAi) {
         try {
-          const result = scenesFromAiPlan(await options.aiPlanner!({ script: snapshot.script, style: snapshot.style, aspectRatio: snapshot.aspectRatio, genre: snapshot.genre }), snapshot.cover);
+          const result = scenesFromAiPlan(await options.aiPlanner!({ script: snapshot.script, style: snapshot.style, aspectRatio: snapshot.aspectRatio, genre: snapshot.genre, brief: snapshot.brief }), snapshot.cover);
           plan = { planner: status.deepseek ? "deepseek" : "nemotron", planNote: "", ...result };
         } catch (error) {
           const reason = error instanceof Error ? error.message : "bilinmeyen hata";
@@ -596,6 +685,11 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       } else {
         plan = { planner: "heuristic", planNote: "", characters: [], scenes: planScenes(snapshot.script, snapshot.style, snapshot.cover) };
       }
+      const enhanced = await enhanceScenesOutsideLock(
+        { style: snapshot.style, aspectRatio: snapshot.aspectRatio, genre: snapshot.genre, characters: plan.characters },
+        plan.scenes,
+      );
+      applySceneEnhancements(plan.scenes, enhanced);
       return transaction((database) => {
         const project = find(database, id); checkRevision(project, revision); requireIdle(project);
         Object.assign(project, plan);
@@ -604,17 +698,68 @@ export function createProjectRepository(directory: string, options: RepositoryOp
         touch(project, new Date().toISOString()); return publicProject(project);
       });
     },
-    updateScene: (id: string, sceneId: string, revision: number, input: ScenePatch): Promise<Project> => transaction((database) => {
-      const patch = parseInput(scenePatchSchema, input); const project = find(database, id); checkRevision(project, revision); requireIdle(project); parseInput(idSchema, sceneId);
-      const scene = project.scenes.find((item) => item.id === sceneId); if (!scene) throw new AppError(404, "Çekim bulunamadı.");
-      if (patch.model && ![VIDEO_MODEL, TITLE_MODEL, ...LEGACY_VIDEO_MODELS, "FFmpeg yazı kartı"].includes(patch.model)) throw new AppError(400, "Katalogdaki bir üretim yöntemini seçin.");
-      if (patch.characterIds?.some((characterId) => !project.characters.some((character) => character.id === characterId))) throw new AppError(400, "Çekime yalnızca projedeki karakterler bağlanabilir.");
-      const frameChanged = (patch.prompt !== undefined && patch.prompt !== scene.prompt) || (patch.description !== undefined && patch.description !== scene.description);
-      Object.assign(scene, patch);
-      if (patch.kind || scene.model === VIDEO_MODEL || LEGACY_VIDEO_MODELS.includes(scene.model) || scene.model === "FFmpeg yazı kartı") { scene.model = (patch.kind ?? scene.kind) === "title" ? TITLE_MODEL : VIDEO_MODEL; }
-      if (frameChanged && scene.imageSource === "generated") { scene.imageSource = "reference"; scene.review = null; scene.repair = null; }
-      project.scenes.forEach((item) => { item.status = "draft"; }); project.run = null; project.status = "planned"; project.duration = project.scenes.reduce((sum, item) => sum + item.duration, 0); touch(project, new Date().toISOString()); return publicProject(project);
-    }),
+    /** Asks the director assistant what it would change. Nothing is saved; the answer is a proposal to read. */
+    proposeEdits: async (id: string, revision: number, message: string): Promise<AssistantProposal> => {
+      if (!options.assistant) throw new AppError(400, "Asistan için DeepSeek ya da NVIDIA anahtarı gerekli.");
+      const snapshot = await transaction((database) => {
+        const project = find(database, id); checkRevision(project, revision); requireIdle(project);
+        if (!project.scenes.length) throw new AppError(400, "Asistanın düzenleyebilmesi için önce hikâyeyi sahnelere böl.");
+        return { style: project.style, aspectRatio: project.aspectRatio, genre: project.genre, look: project.look, brief: project.brief, characters: structuredClone(project.characters), scenes: structuredClone(project.scenes) };
+      });
+      return parseAssistantReply(await options.assistant(assistantInstructions(snapshot, message)), snapshot);
+    },
+    /** Applies a proposal the user accepted, all at once: either every change lands or none does. */
+    applyEdits: async (id: string, revision: number, edits: { scenes: { id: string; set: ScenePatch }[]; project?: AssistantProjectPatch | null }): Promise<Project> => {
+      const { saved, pending } = await transaction((database) => {
+        const project = find(database, id); checkRevision(project, revision); requireIdle(project);
+        const allowed = new Set<string>(ASSISTANT_SCENE_FIELDS);
+        for (const edit of edits.scenes) {
+          const scene = project.scenes.find((item) => item.id === edit.id);
+          if (!scene) throw new AppError(404, "Çekim bulunamadı.");
+          if (Object.keys(edit.set).some((key) => !allowed.has(key))) throw new AppError(400, "Asistan yalnızca başlık, anlatım, görsel tarif, kamera, süre, dış ses ve duyguları değiştirebilir.");
+          applyScenePatch(project, scene, edit.set);
+          // The assistant writes the picture prompt in cinematic English, so it is already the model-ready text.
+          if (edit.set.prompt !== undefined) { scene.promptEn = edit.set.prompt; scene.promptEnSource = edit.set.prompt; }
+        }
+        if (edits.project) {
+          if (edits.project.genre !== undefined) project.genre = edits.project.genre;
+          if (edits.project.look !== undefined) project.look = edits.project.look;
+          if (edits.project.brief !== undefined) project.brief = edits.project.brief;
+        }
+        project.scenes.forEach((item) => { item.status = "draft"; }); project.run = null; project.status = "planned"; project.duration = project.scenes.reduce((sum, item) => sum + item.duration, 0); touch(project, new Date().toISOString());
+        return { saved: publicProject(project), pending: structuredClone(project.scenes.filter((scene) => edits.scenes.some((edit) => edit.id === scene.id))) };
+      });
+      const updates = await enhanceScenesOutsideLock(saved, pending);
+      if (!updates.size) return saved;
+      return transaction((database) => {
+        const project = database.projects.find((item) => item.id === id);
+        if (!project || project.run?.status === "running") return saved;
+        applySceneEnhancements(project.scenes, updates);
+        project.updatedAt = new Date().toISOString();
+        return publicProject(project);
+      });
+    },
+    updateScene: async (id: string, sceneId: string, revision: number, input: ScenePatch): Promise<Project> => {
+      const { saved, frameChanged, targetScene } = await transaction((database) => {
+        const patch = parseInput(scenePatchSchema, input); const project = find(database, id); checkRevision(project, revision); requireIdle(project); parseInput(idSchema, sceneId);
+        const scene = project.scenes.find((item) => item.id === sceneId); if (!scene) throw new AppError(404, "Çekim bulunamadı.");
+        if (patch.model && ![VIDEO_MODEL, TITLE_MODEL, ...LEGACY_VIDEO_MODELS, "FFmpeg yazı kartı"].includes(patch.model)) throw new AppError(400, "Katalogdaki bir üretim yöntemini seçin.");
+        if (patch.characterIds?.some((characterId) => !project.characters.some((character) => character.id === characterId))) throw new AppError(400, "Çekime yalnızca projedeki karakterler bağlanabilir.");
+        const changed = applyScenePatch(project, scene, patch);
+        project.scenes.forEach((item) => { item.status = "draft"; }); project.run = null; project.status = "planned"; project.duration = project.scenes.reduce((sum, item) => sum + item.duration, 0); touch(project, new Date().toISOString());
+        return { saved: publicProject(project), frameChanged: changed, targetScene: structuredClone(scene) };
+      });
+      if (!frameChanged || targetScene.kind !== "video" || !options.promptEnhancer) return saved;
+      const updates = await enhanceScenesOutsideLock(saved, [targetScene]);
+      if (!updates.size) return saved;
+      return transaction((database) => {
+        const project = database.projects.find((item) => item.id === id);
+        if (!project || project.run?.status === "running") return saved;
+        applySceneEnhancements(project.scenes, updates);
+        project.updatedAt = new Date().toISOString();
+        return publicProject(project);
+      });
+    },
     /** Without a quote the run is free. With one, every paid shot is reserved against the budget before anything is sent. */
     /**
      * Frames are only made again when what they are made from changed or the reviewer flagged them; `reuseImages` also keeps
@@ -626,8 +771,6 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       const status = await providers();
       const target = options.target ?? "film";
       if (paidOnly && !quoteId) throw new AppError(400, "Ücretsiz üretim kaldırıldı. Üretim için fiyat teklifi alıp onaylayın.");
-      if (paidOnly && target === "frames") throw new AppError(400, "Ücretli akışta kareler ve videolar tek teklifte üretilir; ayrı kare aşaması yok.");
-      if (target === "frames" && quoteId) throw new AppError(400, "Kare aşaması ücretli video teklifiyle başlatılamaz.");
       return transaction((database) => {
         const project = find(database, id); const fingerprint = JSON.stringify({ mode: quoteId ? "paid" : "free", revision, quoteId, ...options });
         const receipt = database.receipts.find((item) => item.projectId === id && item.key === key);
@@ -637,7 +780,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
         }
         checkRevision(project, revision); requireIdle(project);
         if (!project.scenes.length) throw new AppError(400, "Önce senaryodan bir çekim planı hazırlayın.");
-        if (!status.ffmpeg) throw new AppError(400, "FFmpeg bulunamadı. Video montajı için FFmpeg kurulu olmalı (FFMPEG_PATH ile yolunu belirtebilirsiniz).");
+        if (target === "film" && !status.ffmpeg) throw new AppError(400, "FFmpeg bulunamadı. Video montajı için FFmpeg kurulu olmalı (FFMPEG_PATH ile yolunu belirtebilirsiniz).");
         let paidVideoLines = new Map<string, QuoteLine>();
         let paidImageLines = new Map<string, QuoteLine>();
         let paidVoiceLines = new Map<string, QuoteLine>();
@@ -645,6 +788,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
           const quote = project.quote;
           if (!status.gmi) throw new AppError(400, "GMI anahtarı tanımlı değil; ücretli üretim başlatılamaz.");
           if (!quote || quote.id !== quoteId) throw new AppError(409, "Bu fiyat teklifi artık geçerli değil. Yeni bir teklif alın.");
+          if (quote.target !== target) throw new AppError(409, "Teklifin üretim hedefi bu istekle eşleşmiyor. Yeni bir teklif alın.");
           if (Date.parse(quote.expiresAt) < Date.now()) throw new AppError(409, "Fiyat teklifinin süresi doldu (15 dakika). Güncel fiyatlarla yeni bir teklif alın.");
           if (quote.fingerprint !== quoteFingerprint(project)) throw new AppError(409, "Teklif alındıktan sonra çekimler veya bütçe değişti. Yeni bir teklif alın.");
           const remaining = money((project.budget ?? 0) - committedSpend(project.ledger));
@@ -656,7 +800,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
             // A still-current frame or an already-paid clip is reused by an unpaid step; everything else must be quoted.
             const reusedImages = new Set(quote.reused.filter((line) => line.kind === "image").map((line) => line.sceneId));
             const reusedVideos = new Set(quote.reused.filter((line) => line.kind === "video").map((line) => line.sceneId));
-            const missing = project.scenes.filter((scene) => scene.kind === "video" && ((!paidImageLines.has(scene.id) && !reusedImages.has(scene.id)) || (!paidVideoLines.has(scene.id) && !reusedVideos.has(scene.id))));
+            const missing = project.scenes.filter((scene) => scene.kind === "video" && ((!paidImageLines.has(scene.id) && !reusedImages.has(scene.id)) || (target === "film" && !paidVideoLines.has(scene.id) && !reusedVideos.has(scene.id))));
             if (missing.length) throw new AppError(409, `${missing.length} çekimin kare veya videosu teklifte yok. Yeni bir teklif alın.`);
             for (const line of paidImageLines.values()) {
               const scene = project.scenes.find((item) => item.id === line.sceneId);
@@ -705,7 +849,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
         if (!steps.length) throw new AppError(400, "Üretilecek görsel çekim yok.");
         // Frame stage completes before clip generation; references are stable for the whole film.
         steps = [...steps.filter((item) => item.kind === "image"), ...steps.filter((item) => item.kind !== "image")];
-        if (options.prepareCharacters) {
+        if (options.prepareCharacters && !(target === "frames" && quoteId)) {
           const pending = project.characters.filter((character) => character.sheet.status !== "approved");
           if (pending.some((character) => character.reference)) throw new AppError(400, "Fotoğraf referanslı karakterler için önce Karakter bankasında fiyatı onaylayın ve sayfaları hazırlayın.");
           if (pending.length && !status.nvidia) throw new AppError(400, "Otomatik karakter hazırlamak için NVIDIA bağlantısı gerekir. Karakterleri elle hazırlayabilir veya yalnızca film üretimini seçebilirsiniz.");
@@ -768,6 +912,9 @@ export function createProjectRepository(directory: string, options: RepositoryOp
         if (result.url !== scene.image) { scene.repair = null; scene.frameModel = result.frameModel ?? ""; }
         scene.image = result.url; scene.imageSource = result.source; scene.review = result.review;
         if (result.frameKey !== undefined) scene.frameKey = result.frameKey;
+        if (result.promptEn !== undefined) scene.promptEn = result.promptEn.slice(0, 4_000);
+        if (result.promptEnSource !== undefined) scene.promptEnSource = result.promptEnSource;
+        if (result.motionPrompt) scene.motionPrompt = result.motionPrompt;
         if (run.target === "frames") scene.status = "ready";
         const entry = ledgerEntry(project, step.paid?.ledgerId);
         if (entry && result.ledger) { entry.status = result.ledger.status; entry.note = result.ledger.note.slice(0, 500); entry.at = now; if (result.ledger.status === "charged") entry.actual = entry.estimate; }
@@ -848,7 +995,11 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       run.progress = Math.round((done / run.steps.length) * 1000) / 10;
       if (done === run.steps.length) {
         run.status = "completed"; run.completedAt = now;
-        if (run.target === "frames") project.scenes.forEach((item) => { if (item.kind === "title") item.status = "draft"; });
+        if (run.target === "frames") {
+          project.scenes.forEach((item) => { if (item.kind === "title") item.status = "draft"; });
+          const generated = project.scenes.find((item) => item.imageSource === "generated");
+          if (generated) project.cover = generated.image;
+        }
         if (run.mode === "characters" || run.mode === "repair" || run.target === "frames") project.status = project.output ? "ready" : project.scenes.length ? "planned" : "draft";
         else {
           project.status = "ready";
@@ -864,6 +1015,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       if (!active) return false;
       const { project, run, step } = active;
       const scene = project.scenes.find((item) => item.id === step.sceneId);
+      const character = project.characters.find((item) => item.id === step.characterId);
       const label = `${subjectOf(project, step)}${STEP_LABEL[step.kind]}`;
       step.note = message.slice(0, 500); step.leaseUntil = null; step.owner = null;
       // Retrying is safe before a paid request is sent, or once its request id is known (the retry only polls); never in between.
@@ -874,6 +1026,12 @@ export function createProjectRepository(directory: string, options: RepositoryOp
         project.updatedAt = new Date().toISOString();
       } else {
         step.status = "failed"; if (scene) scene.status = "failed";
+        if (character && step.kind === "character") {
+          const best = bestAttempt(character.sheet.attempts.filter((attempt) => attempt.runId === run.id));
+          character.sheet.status = best ? "review" : character.sheet.chosen ? "review" : "failed";
+          if (best) character.sheet.chosen = best.id;
+          character.sheet.note = message.slice(0, 600);
+        }
         stopRun(project, "failed", new Date().toISOString());
         pushEvent(run, `Üretim durdu: ${label} — ${message}`, "warning");
       }
@@ -883,7 +1041,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
     importStoryboard: (input: Omit<CreateProjectInput, "script"> & { shots: StoryboardShot[]; characters?: { name: string; appearance: string; aliases: string[]; style: string }[] }): Promise<Project> => transaction((database) => {
       if (database.projects.length >= 100) throw new AppError(400, "Yerel sürümde en fazla 100 proje saklanabilir.");
       const now = new Date().toISOString();
-      const project = makeProject(parseInput(createProjectSchema, { title: input.title, script: scriptFromStoryboard(input.shots), style: input.style, aspectRatio: input.aspectRatio, budget: input.budget }), now);
+      const project = makeProject(parseInput(createProjectSchema, { title: input.title, script: scriptFromStoryboard(input.shots), style: input.style, aspectRatio: input.aspectRatio, budget: input.budget, genre: input.genre, look: input.look, brief: input.brief }), now);
       project.scenes = scenesFromStoryboard(input.shots, project.cover);
       project.characters = (input.characters ?? []).map((item, index) => characterSchema.parse(newCharacter(`c${index + 1}`, item.name, item.appearance, item.aliases, item.style)));
       if (project.characters.length > 12) throw new AppError(400, "En fazla 12 karakter olabilir.");
@@ -913,6 +1071,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       let number = 1;
       while (project.characters.some((character) => character.id === `${prefix}${number}`)) number += 1;
       const character = newCharacter(`${prefix}${number}`, input.name.trim(), input.appearance.trim(), input.aliases.length ? input.aliases : [input.name], input.style.trim(), kind);
+      if (input.framing) character.framing = input.framing;
       project.characters.push(character);
       project.scenes.forEach((scene) => { if (mentionsCharacter(scene, character) && !scene.characterIds.includes(character.id)) scene.characterIds.push(character.id); });
       project.quote = null;
@@ -923,7 +1082,8 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       const project = find(database, id); checkRevision(project, revision); requireIdle(project);
       const character = project.characters.find((item) => item.id === characterId);
       if (!character) throw new AppError(404, "Karakter bulunamadı.");
-      const looksChanged = (input.appearance !== undefined && input.appearance.trim() !== character.appearance) || (input.style !== undefined && input.style.trim() !== character.style);
+      const looksChanged = (input.appearance !== undefined && input.appearance.trim() !== character.appearance) || (input.style !== undefined && input.style.trim() !== character.style) || (input.framing !== undefined && input.framing !== character.framing);
+      if (input.framing !== undefined) character.framing = input.framing;
       if (input.name !== undefined) character.name = input.name.trim();
       if (input.appearance !== undefined) character.appearance = input.appearance.trim();
       if (input.style !== undefined) character.style = input.style.trim();
@@ -1118,10 +1278,15 @@ export function createProjectRepository(directory: string, options: RepositoryOp
     prepareQuote: async (id: string, input: QuoteInput): Promise<Project> => {
       parseInput(revisionSchema, input.revision);
       if (input.budget !== null && (!Number.isFinite(input.budget) || input.budget < 0 || input.budget > 100_000)) throw new AppError(400, "Bütçe 0 ile 100.000 USD arasında olmalı.");
-      const narration = await transaction((database) => { const project = find(database, id); checkRevision(project, input.revision); requireIdle(project); return project.narration; });
-      const referenceFrames = paidOnly || Boolean(input.referenceFrames);
-      const wantsVideo = paidOnly || input.selections.some((selection) => selection.motion === "ai");
-      const wantsVoice = narration.engine === "gmi";
+      const snapshot = await transaction((database) => {
+        const project = find(database, id); checkRevision(project, input.revision); requireIdle(project);
+        return { narration: project.narration, style: project.style, aspectRatio: project.aspectRatio, genre: project.genre, characters: structuredClone(project.characters), scenes: structuredClone(project.scenes) };
+      });
+      const narration = snapshot.narration;
+      const target = input.target ?? "film";
+      const referenceFrames = target === "frames" || paidOnly || Boolean(input.referenceFrames);
+      const wantsVideo = target === "film" && (paidOnly || input.selections.some((selection) => selection.motion === "ai"));
+      const wantsVoice = target === "film" && narration.engine === "gmi";
       if (!(await providers()).gmi || (wantsVideo && !options.videoPrices) || (!wantsVideo && !referenceFrames && !wantsVoice && !options.videoPrices)) throw new AppError(400, "GMI anahtarı tanımlı değil; ücretli video için teklif alınamaz.");
       const voicePrice = wantsVoice && options.voicePrice ? await options.voicePrice().catch(() => null) : null;
       let prices: ReadonlyMap<string, PriceRule> = new Map();
@@ -1135,8 +1300,10 @@ export function createProjectRepository(directory: string, options: RepositoryOp
         if (options.framePrices) framePrices = await options.framePrices().catch(() => null);
         else if (options.referenceImagePrice) { const price = await options.referenceImagePrice().catch(() => null); framePrices = price === null ? null : new Map([[REFERENCE_MODEL, price]]); }
       }
+      const enhancedScenes = await enhanceScenesOutsideLock(snapshot, snapshot.scenes);
       return transaction((database) => {
         const project = find(database, id); checkRevision(project, input.revision); requireIdle(project);
+        applySceneEnhancements(project.scenes, enhancedScenes);
         const choices = new Map(input.selections.map((selection) => [selection.sceneId, selection]));
         for (const scene of project.scenes) {
           const choice = choices.get(scene.id);
@@ -1150,7 +1317,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
         project.budget = input.budget;
         if (input.frameModel !== undefined) project.frameModel = input.frameModel;
         const media = projectMediaDirectory(mediaDirectory, project.id);
-        project.quote = buildQuote(project, prices, new Date(), referenceFrames ? { enabled: true, prices: framePrices, override: project.frameModel } : undefined, (file) => existsSync(path.join(media, file)), voicePrice);
+        project.quote = buildQuote(project, prices, new Date(), referenceFrames ? { enabled: true, prices: framePrices, override: project.frameModel } : undefined, (file) => existsSync(path.join(media, file)), voicePrice, target);
         touch(project, new Date().toISOString());
         return publicProject(project);
       });

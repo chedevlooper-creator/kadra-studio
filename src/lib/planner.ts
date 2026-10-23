@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { EMOTIONS } from "./cinema";
 import type { AiPlan } from "./providers/nvidia";
 import type { Character, ModelProfile, ProviderStatus, Scene } from "./types";
 import { AppError } from "./validation";
@@ -19,7 +20,7 @@ export function modelCatalog(providers: ProviderStatus): ModelProfile[] {
 }
 
 export function newCharacter(id: string, name: string, appearance: string, aliases: string[] = [name], style = "", kind: Character["kind"] = "person"): Character {
-  return { id, kind, name, appearance, aliases: aliases.map((alias) => alias.trim()).filter(Boolean).slice(0, 12), style, reference: null, sheet: { status: "none", attempts: [], chosen: null, note: "" } };
+  return { id, framing: "auto", kind, name, appearance, aliases: aliases.map((alias) => alias.trim()).filter(Boolean).slice(0, 12), style, reference: null, sheet: { status: "none", attempts: [], chosen: null, note: "" } };
 }
 
 /** A shot features a character when one of its aliases appears in the shot's text (Turkish-aware, case-insensitive). */
@@ -59,7 +60,7 @@ export function parseScript(script: string): Segment[] {
 export { titleCardText } from "./text";
 
 function baseScene(index: number, image: string): Omit<Scene, "title" | "description" | "prompt" | "kind" | "camera" | "duration" | "model" | "modelReason" | "notes"> {
-  return { id: randomUUID(), order: index + 1, motionPrompt: "", status: "draft", image, imageSource: "reference", review: null, frameKey: "", frameModel: "", repair: null, characterIds: [], narration: "", motion: "free", videoModel: null, code: "", group: "", audioNotes: "", screenText: "" };
+  return { id: randomUUID(), order: index + 1, promptEn: "", promptEnSource: "", motionPrompt: "", status: "draft", image, imageSource: "reference", review: null, frameKey: "", frameModel: "", emotions: {}, repair: null, characterIds: [], narration: "", motion: "free", videoModel: null, code: "", group: "", audioNotes: "", screenText: "" };
 }
 
 /** One shot of an exported storyboard (the Flow prototype's JSON). Unknown fields are ignored. */
@@ -146,10 +147,14 @@ export function scenesFromAiPlan(plan: AiPlan, image: string): { characters: Cha
   const scenes = plan.shots.map((shot, index): Scene => {
     const isTitle = shot.kind === "title";
     const description = (isTitle ? shot.on_screen_text || shot.description : shot.description) || shot.title;
+    const prompt = shot.image_prompt || description;
+    const promptEn = shot.image_prompt ? shot.image_prompt : "";
     return {
       ...baseScene(index, image),
       title: shot.title, description,
-      prompt: shot.image_prompt || description,
+      prompt,
+      promptEn,
+      promptEnSource: promptEn ? prompt : "",
       motionPrompt: shot.motion_prompt,
       duration: shot.duration_seconds,
       camera: shot.camera || (isTitle ? "Sabit kadraj" : "Yavaş yaklaşma"),
@@ -157,6 +162,11 @@ export function scenesFromAiPlan(plan: AiPlan, image: string): { characters: Cha
       modelReason: isTitle ? TITLE_REASON : VIDEO_REASON,
       kind: isTitle ? "title" : "video",
       characterIds: [...new Set([...shot.character_ids, shot.location_id].map((id) => idMap.get(id)).filter((id): id is string => Boolean(id)))],
+      // Only emotions the vocabulary knows, only for the people this shot actually links.
+      emotions: Object.fromEntries(Object.entries(shot.emotions).flatMap(([who, feeling]) => {
+        const id = idMap.get(who);
+        return id && EMOTIONS.some((emotion) => emotion.id && emotion.id === feeling) && !id.startsWith("m") ? [[id, feeling] as const] : [];
+      })),
       narration: shot.narration,
       notes: ["Plan NVIDIA Nemotron 3 Ultra ile hazırlandı; senaryodaki olaylar korunarak çekimlere ayrıldı.", "Görsel promptu İngilizce yazıldı; karakter görünüşü her çekimde tekrarlanır."],
     };

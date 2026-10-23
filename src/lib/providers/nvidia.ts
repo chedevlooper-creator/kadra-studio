@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { CAMERA_MOVES, genreOf } from "../cinema";
+import { CAMERA_MOVES, EMOTIONS, genreOf } from "../cinema";
+import { wantsPhoto } from "../framing";
 import type { AspectRatio, Box, ImageReview, ReviewIssue, SheetVerdict } from "../types";
 
 /** Free NVIDIA API catalog (build.nvidia.com). Server-only: the key never reaches the browser. */
@@ -95,6 +96,7 @@ export const aiPlanSchema = z.object({
     }),
     camera: text(160).default(""),
     character_ids: z.array(z.string()).max(12).default([]),
+    emotions: z.record(z.string(), z.string()).default({}),
     location_id: z.string().max(60).nullable().default("").transform((value) => value ?? ""),
     description: text(2_000).default(""),
     on_screen_text: text(400).default(""),
@@ -111,23 +113,25 @@ export function parseAiPlan(content: string): AiPlan {
   return parsed.data;
 }
 
-export interface PlanRequest { script: string; style: string; aspectRatio: AspectRatio; genre?: string }
+export interface PlanRequest { script: string; style: string; aspectRatio: AspectRatio; genre?: string; brief?: string }
 
 /** The planning brief every planner model gets, so their plans have the same shape and rules. */
-export function planInstructions({ script, style, aspectRatio, genre = "" }: PlanRequest): string {
+export function planInstructions({ script, style, aspectRatio, genre = "", brief = "" }: PlanRequest): string {
   const chosen = genreOf(genre);
-  return `Sen bir film yönetmeni ve storyboard sanatçısısın. Aşağıdaki Türkçe senaryoyu kısa bir video için çekim planına dönüştür.
+  return `Sen bir film yönetmeni, görüntü yönetmeni (DoP) ve storyboard sanatçısısın. Aşağıdaki Türkçe senaryoyu (günlük konuşma diliyle, kısa, devrik veya yazım hatalı yazılmış olsa bile) kısa bir video için profesyonel çekim planına dönüştür.
 Kurallar:
 - Senaryodaki hiçbir olayı atlama, olayların sırasını koru, yeni olay ekleme.
 - Her çekim tek bir görüntüdür: 3-8 saniye, tek kamera hareketi.
 - kind "title" yalnızca senaryo açıkça yazı kartı ya da ekranda yazı istediğinde kullanılır; tam metni on_screen_text alanına aynen yaz. Senaryoda yazı istenmiyorsa başlık veya kapanış kartı EKLEME; tüm çekimler kind "video" olsun.
-- Karakterlerin görünüşünü bir kez tanımla; her image_prompt içinde o karakterin görünüşünü aynı kelimelerle tekrar et (tutarlılık için).
-- Olayların geçtiği mekânları da bir kez tanımla (locations: ad ve görünüş; mimari, ışık, renk, belirgin nesneler). Her video çekiminde location_id ver ve image_prompt içinde mekânın görünüşünü aynı kelimelerle tekrar et. Mekân belli değilse location_id boş kalsın.
-- image_prompt ve motion_prompt İngilizce olsun; görsel stil: "${style}", kadraj oranı ${aspectRatio}.${chosen.id ? `
-- Tür: ${chosen.label}. ${chosen.direction}` : ""}
+- Karakterlerin görünüşünü (characters[].appearance) İngilizce olarak, görsel modelin kolayca çizeceği ayırt edici fiziksel detaylarla (yüz hatları, yaş, saç/sakal, başlık, kıyafet dokusu ve renkleri) bir kez tanımla; her image_prompt içinde o karakterin görünüşünü aynı kelimelerle tekrar et (tutarlılık için).
+- Olayların geçtiği mekânları da (locations[].appearance) İngilizce olarak bir kez tanımla (mimari, ışık yönü, renk paleti, atmosfer, belirgin nesneler). Her video çekiminde location_id ver ve image_prompt içinde mekânın görünüşünü aynı kelimelerle tekrar et. Mekân belli değilse location_id boş kalsın.
+- image_prompt ve motion_prompt profesyonel, sinematik İngilizce olsun; kullanıcının kaba veya kısa Türkçe ifadesini görsel üretim modelinin muhteşem bir kare üreteceği zenginlikte (kompozisyon, kamera açısı/lens hissi, ışık ve gölge, atmosfer, doku, alan derinliği) betimle. Görsel stil: "${style}", kadraj oranı ${aspectRatio}.${chosen.id ? `
+- Tür: ${chosen.label}. ${chosen.direction}` : ""}${brief.trim() ? `
+- Filmin sabit üretim notları (her çekimde uy): ${brief.trim().replace(/\s+/g, " ").slice(0, 1_500)}` : ""}
+- emotions alanında çekimdeki her karakterin o andaki duygusunu ver ({karakter_id: duygu}); duygu yalnızca şunlardan biri olsun: ${EMOTIONS.filter((emotion) => emotion.id).map((emotion) => emotion.id).join(", ")}. Belirgin bir duygu yoksa o karakteri yazma.
 - title, camera, description ve narration Türkçe olsun. camera alanında şu ifadelerden birini kullan: ${CAMERA_MOVES.map((move) => `"${move.label}"`).join(", ")}.
 Yalnızca şu yapıda geçerli JSON döndür, başka metin yazma:
-{"characters":[{"id":"c1","name":"","appearance":""}],"locations":[{"id":"m1","name":"","appearance":""}],"shots":[{"title":"","kind":"video","duration_seconds":5,"camera":"","character_ids":["c1"],"location_id":"m1","description":"","on_screen_text":"","image_prompt":"","motion_prompt":"","narration":""}]}
+{"characters":[{"id":"c1","name":"","appearance":""}],"locations":[{"id":"m1","name":"","appearance":""}],"shots":[{"title":"","kind":"video","duration_seconds":5,"camera":"","character_ids":["c1"],"emotions":{"c1":"tense"},"location_id":"m1","description":"","on_screen_text":"","image_prompt":"","motion_prompt":"","narration":""}]}
 
 SENARYO:
 ${script}`;
@@ -217,20 +221,34 @@ export function parseSheetVerdict(content: string): SheetVerdict {
   return { ok: Math.min(...values) >= 3 && average >= 3.5, scores, note: typeof value.not === "string" ? value.not.slice(0, 300) : "", issues: parseIssues(value.sorunlar) };
 }
 
-/** The judging criteria every sheet judge is given; a location plate is judged on its set, not on a pose. */
-export function sheetCriteria({ name, appearance, style, withReference, kind = "person" }: { name: string; appearance: string; style: string; withReference: boolean; kind?: "person" | "place" }): string {
+/**
+ * The judging criteria every sheet judge is given. A location plate is judged on its set, a free composition on whether it shows
+ * what the text lists, a sheet on a clean single figure. The style is judged as the user wrote it: a photographic style must look
+ * like a photograph, any other style must not. A missing key element caps "ozellikler" so a wrong picture cannot pass on polish.
+ */
+export function sheetCriteria({ name, appearance, style, withReference, kind = "person", framing = "sheet" }: { name: string; appearance: string; style: string; withReference: boolean; kind?: "person" | "place"; framing?: "sheet" | "free" }): string {
   const place = kind === "place";
-  return `Bir film için ${place ? "mekân referans görseli" : "karakter referans sayfası"} değerlendiriyorsun. ${place ? "Mekân" : "Karakter"}: "${name}". Tarif: "${appearance.slice(0, 600)}". İstenen çizim stili: "${style.slice(0, 300)}".
-${withReference ? `İlk görsel üretilen ${place ? "mekân görseli" : "karakter sayfası"}, ikinci görsel referans fotoğraf.` : `Görsel üretilen ${place ? "mekân görseli" : "karakter sayfası"}.`}
+  const free = !place && framing === "free";
+  const noun = place ? "mekân görseli" : free ? "görsel" : "karakter sayfası";
+  const styleRule = wantsPhoto(style)
+    ? "Fotogerçekçi bir görünüm istendi; çizim, illüstrasyon ya da çizgi film gibi görünüyorsa düşük puan ver."
+    : "Fotoğraf gibi görünüyorsa düşük puan ver.";
+  return `Bir film için ${noun} değerlendiriyorsun. ${place ? "Mekân" : "Konu"}: "${name}". Tarif: "${appearance.slice(0, 600)}". İstenen çizim stili: "${style.slice(0, 300)}".
+${withReference ? `İlk görsel üretilen ${noun}, ikinci görsel referans fotoğraf.` : `Görsel üretilen ${noun}.`}
 Her ölçütü 1-5 puanla (5 en iyi):
-- stil: Görsel istenen çizim/animasyon stilinde mi? Fotoğraf gibi görünüyorsa düşük puan ver.
+- stil: Görsel istenen stilde mi? ${styleRule}
 ${place
     ? `- ozellikler: Tarifteki mekân özellikleri (mimari, ışık, renk, belirgin nesneler)${withReference ? " ve referans fotoğraftaki yerin belirgin hatları" : ""} var mı?
 - poz: Geniş, insansız ve düzeni okunur bir kadraj mı?
 - temizlik: Bozuk perspektif, eriyen şekil, anlamsız yazı ya da filigran yok mu?`
-    : `- ozellikler: Tarifteki ayırt edici özellikler${withReference ? " ve referans fotoğraftaki kişinin belirgin hatları (yüz şekli, saç, sakal/bıyık, başlık)" : ""} karakterde var mı?
+    : free
+      ? `- ozellikler: Tarifteki ayırt edici özellikler${withReference ? " ve referans fotoğraftaki kişilerin belirgin hatları" : ""} görselde var mı?
+- poz: Tarifteki kompozisyon uygulanmış mı (kaç figür, ölçek, ortam, düzen)? Tarifte istenen figür sayısı ya da ortam eksikse düşük puan ver.
+- temizlik: Bozuk yüz, fazla parmak, eriyen şekil, anlamsız yazı ya da filigran yok mu?`
+      : `- ozellikler: Tarifteki ayırt edici özellikler${withReference ? " ve referans fotoğraftaki kişinin belirgin hatları (yüz şekli, saç, sakal/bıyık, başlık)" : ""} karakterde var mı?
 - poz: Tek karakter, önden ya da hafif açılı, düz ve sade arka plan mı?
 - temizlik: Bozuk yüz, fazla parmak, eriyen şekil, anlamsız yazı ya da filigran yok mu?`}
+Tarifte açıkça istenen önemli bir öğe (figür sayısı, ölçek, ortam, belirgin nesne) görselde yoksa ozellikler en çok 2 olsun ve notta eksik öğeyi yaz.
 ${ISSUE_RULES}
 Yalnızca JSON döndür: {"stil": n, "ozellikler": n, "poz": n, "temizlik": n, "not": "kısa Türkçe açıklama", ${ISSUE_SHAPE}}`;
 }
@@ -239,8 +257,8 @@ Yalnızca JSON döndür: {"stil": n, "ozellikler": n, "poz": n, "temizlik": n, "
  * Judges a character sheet against what was asked: drawn style, the described traits, a clean front-facing pose.
  * With a reference photo it also checks that the person's distinctive features carried over into the drawing.
  */
-export async function judgeCharacterSheet({ image, reference, name, appearance, style, kind }: { image: Buffer; reference: Buffer | null; name: string; appearance: string; style: string; kind?: "person" | "place" }): Promise<SheetVerdict> {
-  const criteria = sheetCriteria({ name, appearance, style, withReference: Boolean(reference), kind });
+export async function judgeCharacterSheet({ image, reference, name, appearance, style, kind, framing }: { image: Buffer; reference: Buffer | null; name: string; appearance: string; style: string; kind?: "person" | "place"; framing?: "sheet" | "free" }): Promise<SheetVerdict> {
+  const criteria = sheetCriteria({ name, appearance, style, withReference: Boolean(reference), kind, framing });
   const images = [image, ...(reference ? [reference] : [])].map((bytes) => ({ type: "image_url", image_url: { url: `data:image/${bytes[0] === 0x89 ? "png" : "jpeg"};base64,${bytes.toString("base64")}` } }));
   const ask = (model: string, content: unknown[], extra: Record<string, unknown> = {}) => chat(model, [{ role: "user", content: [{ type: "text", text: criteria }, ...content] }], 1_500, 90_000, extra);
   try { return parseSheetVerdict(await ask(NVIDIA_MODELS.review, images)); }
@@ -248,4 +266,9 @@ export async function judgeCharacterSheet({ image, reference, name, appearance, 
     if (error instanceof ProviderError && !error.retryable && reference) return parseSheetVerdict(await ask(NVIDIA_MODELS.review, images.slice(0, 1)));
     return parseSheetVerdict(await ask(NVIDIA_MODELS.reviewFallback, images.slice(0, 1), { reasoning_budget: 768 }));
   }
+}
+
+/** A plain completion on the free planner model; the director assistant's fallback when DeepSeek is not connected. */
+export async function completeWithNemotron(prompt: string, maxTokens = 6_000): Promise<string> {
+  return chat(NVIDIA_MODELS.planner, [{ role: "user", content: prompt }], maxTokens, 120_000, {}, false);
 }

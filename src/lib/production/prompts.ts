@@ -1,14 +1,34 @@
-import { CAMERA_MOVES, cameraMove, genreOf } from "../cinema";
+import { CAMERA_MOVES, cameraMove, emotionOf, genreOf } from "../cinema";
+import { resolveFraming, wantsPhoto } from "../framing";
 import type { Character, Project, ReviewIssue, Scene } from "../types";
 
-type PromptProject = Pick<Project, "characters" | "style"> & { genre?: string };
+type PromptProject = Pick<Project, "characters" | "style"> & { genre?: string; brief?: string };
+
+/**
+ * Uses the background-enhanced English prompt when it is still in sync with the scene's source prompt;
+ * falls back to `scene.prompt` when enhancement has not run yet or after an offline edit.
+ */
+export function effectiveScenePrompt(scene: Pick<Scene, "prompt"> & Partial<Pick<Scene, "promptEn" | "promptEnSource">>): string {
+  return scene.promptEn && scene.promptEnSource === scene.prompt ? scene.promptEn : scene.prompt;
+}
 
 /** Storyboard prompts often carry their own "Style:" sentence; the project style is only added when they don't. */
 function styleHint(project: PromptProject, scene: Scene): string {
-  return /\bstyle\s*:/i.test(scene.prompt) ? "" : `Visual style: ${project.style}`;
+  return /\bstyle\s*:/i.test(effectiveScenePrompt(scene)) ? "" : `Visual style: ${project.style}`;
 }
 
 const moodHint = (project: PromptProject) => genreOf(project.genre ?? "").mood;
+
+/** The film's standing notes; empty (and therefore absent from every prompt and fingerprint) until the user writes some. */
+const briefHint = (project: PromptProject) => project.brief?.trim() ? `Production notes to follow throughout: ${project.brief.trim().replace(/\s+/g, " ")}` : "";
+
+/** How the characters of this shot feel, e.g. "Ada looks frightened, wide eyes". */
+function feelings(project: PromptProject, scene: Scene): string {
+  return project.characters
+    .filter((character) => scene.characterIds.includes(character.id) && (character.kind ?? "person") === "person")
+    .flatMap((character) => { const phrase = emotionOf(scene.emotions?.[character.id] ?? "").prompt; return phrase ? [`${character.name} ${phrase}`] : []; })
+    .join("; ");
+}
 
 /** The people and the places linked to a shot, each as "name: description". */
 function cast(project: PromptProject, scene: Scene): { people: string; places: string } {
@@ -57,10 +77,11 @@ function fitPrompt(sections: (string | false | undefined)[], tail: string, maxCh
 export function compileVideoPrompt(project: PromptProject, scene: Scene, maxChars = 1_900): CompiledPrompt {
   const { people, places } = cast(project, scene);
   return fitPrompt([
-    scene.motionPrompt || cameraPhrase(scene), scene.prompt,
+    scene.motionPrompt || cameraPhrase(scene), effectiveScenePrompt(scene),
     people && `Keep these characters exactly as they appear in the first frame: ${people}`,
+    feelings(project, scene),
     places && `Keep the location as it appears in the first frame: ${places}`,
-    styleHint(project, scene), moodHint(project),
+    styleHint(project, scene), moodHint(project), briefHint(project),
   ], VIDEO_TAIL, maxChars);
 }
 
@@ -70,29 +91,46 @@ export function videoPrompt(project: PromptProject, scene: Scene): string {
 
 const SHEET_FRAMING = "Single character, upper body, front view, neutral light grey background, even studio light, clean shapes, no text, no logos, no watermark";
 const PLATE_FRAMING = "Wide establishing view of the place, no people, no characters, clear readable layout, natural light, no text, no logos, no watermark";
+const FREE_TAIL = "Compose it exactly as described, with every figure, object and setting that is mentioned. No text, no logos, no watermark";
 
-/** Never adds anything beyond the user's description and style; a refused request is not reworded to get past a filter. */
-export function sheetPrompt(project: Pick<Project, "style">, character: Character): string {
+/**
+ * The text a character, creature, monument or place is drawn from. The user's own style and description lead; Kadra only adds
+ * framing that cannot contradict them: a plain sheet (one figure, front view, neutral background) only when the entry is a
+ * sheet, "draw it as a stylized character, not a photograph" only when the style does not ask for a photograph, and a note
+ * about what the previous attempt got wrong when there is one. A refused request is never reworded to get past a filter.
+ */
+export function sheetPrompt(project: Pick<Project, "style">, character: Character, fix = ""): string {
   const rawStyle = character.style || project.style;
+  const photo = wantsPhoto(rawStyle);
+  const correction = fix.trim() ? ` The previous attempt was rejected for this reason, so fix exactly that: ${fix.trim().replace(/\s+/g, " ").slice(0, 300)}.` : "";
+  const free = resolveFraming(character) === "free";
   if (character.kind === "place") {
     if (character.reference) {
-      return `Turn the place in the reference photo into a location reference plate in this style: ${rawStyle}. ${character.appearance}. Keep its recognisable layout, architecture and landmarks, drawn in the style, not as a photograph. ${PLATE_FRAMING}.`;
+      return `Turn the place in the reference photo into a location reference plate in this style: ${rawStyle}. ${character.appearance}. Keep its recognisable layout, architecture and landmarks${photo ? "" : ", drawn in the style, not as a photograph"}. ${PLATE_FRAMING}.${correction}`;
     }
     const style = rawStyle.slice(0, 200);
     const maxAppearance = Math.max(100, 800 - (`Location reference plate in this style: ${style}. . ${PLATE_FRAMING}.`).length);
-    return `Location reference plate in this style: ${style}. ${character.appearance.slice(0, maxAppearance)}. ${PLATE_FRAMING}.`;
+    return `Location reference plate in this style: ${style}. ${character.appearance.slice(0, maxAppearance)}. ${PLATE_FRAMING}.${correction}`;
+  }
+  if (free) {
+    if (character.reference) {
+      return `Create an image in this style: ${rawStyle}. ${character.appearance}. Use the reference photo for the recognisable features of the people or places it shows (face shape, hairline, facial hair, headwear, landmarks)${photo ? "" : ", but render them in the style above rather than as a photograph"}. ${FREE_TAIL}.${correction}`;
+    }
+    const style = rawStyle.slice(0, 200);
+    const maxAppearance = Math.max(100, 800 - (`Create an image in this style: ${style}. . ${FREE_TAIL}.`).length);
+    return `Create an image in this style: ${style}. ${character.appearance.slice(0, maxAppearance)}. ${FREE_TAIL}.${correction}`;
   }
   if (character.reference) {
-    return `Turn the person in the reference photo into a character reference sheet in this style: ${rawStyle}. ${character.appearance}. Keep their recognisable features (face shape, hairline, facial hair, headwear, age) but draw them clearly as a stylized character, not as a photograph. ${SHEET_FRAMING}.`;
+    return `Turn the person in the reference photo into a character reference sheet in this style: ${rawStyle}. ${character.appearance}. Keep their recognisable features (face shape, hairline, facial hair, headwear, age)${photo ? "" : " but draw them clearly as a stylized character, not as a photograph"}. ${SHEET_FRAMING}.${correction}`;
   }
   const style = rawStyle.slice(0, 200);
   const maxAppearance = Math.max(100, 800 - (`Character reference sheet in this style: ${style}. . ${SHEET_FRAMING}.`).length);
-  return `Character reference sheet in this style: ${style}. ${character.appearance.slice(0, maxAppearance)}. ${SHEET_FRAMING}.`;
+  return `Character reference sheet in this style: ${style}. ${character.appearance.slice(0, maxAppearance)}. ${SHEET_FRAMING}.${correction}`;
 }
 
 export function compileImagePrompt(project: PromptProject, scene: Scene, maxChars = 1_800): CompiledPrompt {
   const { people, places } = cast(project, scene);
-  return fitPrompt([scene.prompt, people && `Characters: ${people}`, places && `Location: ${places}`, styleHint(project, scene), moodHint(project)], FRAME_TAIL, maxChars);
+  return fitPrompt([effectiveScenePrompt(scene), people && `Characters: ${people}`, feelings(project, scene), places && `Location: ${places}`, styleHint(project, scene), moodHint(project), briefHint(project)], FRAME_TAIL, maxChars);
 }
 
 export function imagePrompt(project: PromptProject, scene: Scene): string {
@@ -111,8 +149,9 @@ export function compileScenePrompt(project: PromptProject, scene: Scene, referen
   return fitPrompt([
     refs,
     continuity && `Reference image ${references.length + 1} is the previous shot of this scene; keep the lighting, props and layout continuous with it`,
-    `Draw this scene while keeping ${keep || "the references' look"}: ${scene.prompt}`,
-    styleHint(project, scene), moodHint(project),
+    `Draw this scene while keeping ${keep || "the references' look"}: ${effectiveScenePrompt(scene)}`,
+    feelings(project, scene),
+    styleHint(project, scene), moodHint(project), briefHint(project),
   ], FRAME_TAIL, maxChars);
 }
 

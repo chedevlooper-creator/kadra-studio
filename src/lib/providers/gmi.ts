@@ -52,11 +52,17 @@ export const getModelInfo = (model: string) => call<GmiModelInfo>(`/models/${enc
 
 /** Uploads a frame to GMI storage and returns its public (unguessable) URL. Uploading is not billed. */
 export async function uploadImage(image: Buffer, type: "jpg" | "png"): Promise<string> {
-  const target = await call<{ upload_url: string; public_url: string }>("/upload-url", { method: "POST", body: JSON.stringify({ file_type: type }) });
+  const fileType = type === "png" ? "png" : "jpeg";
+  const target = await call<{ upload_url: string; public_url: string }>("/upload-url", { method: "POST", body: JSON.stringify({ file_type: fileType }) });
   let response: Response;
-  try { response = await fetch(target.upload_url, { method: "PUT", headers: { "Content-Type": type === "png" ? "image/png" : "image/jpeg" }, body: new Uint8Array(image), signal: AbortSignal.timeout(60_000) }); }
+  try { response = await fetch(target.upload_url, { method: "PUT", headers: { "Content-Type": `image/${fileType}` }, body: new Uint8Array(image), signal: AbortSignal.timeout(60_000) }); }
   catch { throw new ProviderError("Kare GMI depolamasına yüklenemedi.", true); }
-  if (!response.ok) throw new ProviderError(`Kare GMI depolamasına yüklenemedi (HTTP ${response.status}).`, true);
+  if (!response.ok) {
+    // Storage answers in XML; its error code (e.g. SignatureDoesNotMatch) says why. A refused upload does not fix
+    // itself, so only throttling and server errors are retried.
+    const code = (await response.text().catch(() => "")).match(/<Code>([^<]{1,60})<\/Code>/)?.[1];
+    throw new ProviderError(`Kare GMI depolamasına yüklenemedi (HTTP ${response.status}${code ? `, ${code}` : ""}).`, response.status === 408 || response.status === 429 || response.status >= 500);
+  }
   return target.public_url;
 }
 

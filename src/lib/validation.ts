@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { GENRES, LOOKS } from "./cinema";
+import { EMOTIONS, GENRES, LOOKS } from "./cinema";
+import { EXPORT_FORMATS } from "./formats";
 
 export class AppError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -15,6 +16,7 @@ export const createProjectSchema = z.object({
   budget: z.number().finite().min(0, "Bütçe negatif olamaz.").max(100_000).nullable(),
   genre: z.enum(GENRES.map((genre) => genre.id) as [string, ...string[]]).optional(),
   look: z.enum(LOOKS.map((look) => look.id) as [string, ...string[]]).optional(),
+  brief: z.string().trim().max(1_500, "Proje özeti en fazla 1.500 karakter olabilir.").optional(),
 }).strict();
 
 export const narrationSchema = z.object({
@@ -43,6 +45,7 @@ export const scenePatchSchema = z.object({
   audioNotes: z.string().max(4_000).optional(),
   screenText: z.string().max(4_000).optional(),
   characterIds: z.array(z.string().max(20)).max(12).optional(),
+  emotions: z.record(z.string().max(20), z.enum(EMOTIONS.map((emotion) => emotion.id) as [string, ...string[]])).optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "Kaydedilecek bir değişiklik yok.");
 
 export const updateSceneSchema = z.object({ revision: revisionSchema, scene: scenePatchSchema }).strict();
@@ -51,6 +54,7 @@ export const planSchema = z.object({ revision: revisionSchema, planner: z.enum([
 export const runSchema = z.object({ mode: z.enum(["free", "paid"]), revision: revisionSchema, quoteId: idSchema.optional(), target: z.enum(["frames", "film"]).optional(), reuseImages: z.boolean().optional(), prepareCharacters: z.boolean().optional(), regenerate: z.boolean().optional() }).strict()
   .refine((value) => (value.mode === "paid") === Boolean(value.quoteId), "Ücretli üretim için onaylanmış bir fiyat teklifi gerekir.");
 export const quoteSchema = z.object({
+  target: z.enum(["frames", "film"]).default("film"),
   revision: revisionSchema,
   quality: z.enum(["economy", "balanced", "best"]),
   budget: z.number().finite().min(0, "Bütçe negatif olamaz.").max(100_000).nullable(),
@@ -95,9 +99,10 @@ const characterFields = {
   appearance: z.string().trim().max(1_200),
   aliases: z.array(z.string().trim().min(1).max(80)).max(12),
   style: z.string().trim().max(400),
+  framing: z.enum(["auto", "sheet", "free"]).default("auto"),
 };
 export const characterCreateSchema = z.object({ revision: revisionSchema, ...characterFields, kind: z.enum(["person", "place"]).default("person") }).strict();
-export const characterUpdateSchema = z.object({ revision: revisionSchema, ...characterFields }).partial({ name: true, appearance: true, aliases: true, style: true }).strict();
+export const characterUpdateSchema = z.object({ revision: revisionSchema, ...characterFields }).partial({ name: true, appearance: true, aliases: true, style: true, framing: true }).strict();
 export const characterRunSchema = z.object({ revision: revisionSchema, characterIds: z.array(z.string().max(20)).min(1, "Üretilecek karakter seçin.").max(12), maxCost: z.number().finite().min(0).max(100_000), preview: z.boolean().optional(), engine: z.enum(["auto", "nano-banana"]).optional(), budget: z.number().finite().min(0).max(100_000).optional() }).strict();
 export const characterReviewSchema = z.object({ revision: revisionSchema, action: z.enum(["approve", "reject"]), attemptId: idSchema.nullable().optional() }).strict();
 export const commonsSelectSchema = z.union([
@@ -116,3 +121,19 @@ export const repairSchema = z.object({
   budget: z.number().finite().min(0).max(100_000).optional(),
 }).strict();
 export const repairRevertSchema = z.object({ revision: revisionSchema, sceneId: idSchema }).strict();
+
+export const exportVideoSchema = z.object({
+  format: z.enum(EXPORT_FORMATS.map((format) => format.id) as [string, ...string[]]),
+  mode: z.enum(["fit", "fill"]).default("fit"),
+}).strict();
+
+export const assistantAskSchema = z.object({ revision: revisionSchema, message: z.string().trim().min(3, "Asistana ne yapmasını istediğini yaz.").max(1_000, "İstek en fazla 1.000 karakter olabilir.") }).strict();
+export const assistantApplySchema = z.object({
+  revision: revisionSchema,
+  scenes: z.array(z.object({ id: idSchema, set: scenePatchSchema }).strict()).max(40),
+  project: z.object({
+    genre: z.enum(GENRES.map((genre) => genre.id) as [string, ...string[]]).optional(),
+    look: z.enum(LOOKS.map((look) => look.id) as [string, ...string[]]).optional(),
+    brief: z.string().trim().max(1_500).optional(),
+  }).strict().nullable().optional(),
+}).strict().refine((value) => value.scenes.length > 0 || Object.keys(value.project ?? {}).length > 0, "Uygulanacak bir değişiklik yok.");

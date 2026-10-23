@@ -45,24 +45,23 @@ export default function NarrationPanel({ project, disabled, onProjectChange, not
   }
 
   const voices = settings.engine === "gmi" ? GMI_VOICES.map((voice) => ({ id: voice.id, label: voice.label })) : (localVoices ?? []).map((voice) => ({ id: voice, label: voice }));
-  return <section className="creative-card narration-panel" aria-labelledby="narration-title">
-    <h3 id="narration-title"><Mic size={15} /> Filme dış ses</h3>
-    <p>Çekimlerin seslendirme metinleri seçtiğin sesle okunur ve her çekimin başına yerleştirilir; konuşma sırasında müzik otomatik kısılır. Bir metin bir kez seslendirilir, değişmedikçe yeniden üretilmez.</p>
+  return <section className="panel narration-panel" aria-labelledby="narration-title">
+    <div className="panel-head"><h3 id="narration-title"><Mic size={15} /> Dış ses</h3><p className="quiet">Sahnelerin metinleri okunur, konuşurken müzik kısılır.</p></div>
     <fieldset className="narration-engines" disabled={disabled || busy}>
       <legend className="sr-only">Ses kaynağı</legend>
       {([["off", "Kapalı", "Film yalnızca müzikle"], ["local", "Mac sesi", localVoices?.length === 0 ? "Bu bilgisayarda Türkçe ses yok" : "Ücretsiz taslak"], ["gmi", "MiniMax Türkçe", "Ücretli · teklif onayıyla"]] as const).map(([id, label, hint]) => <button key={id} type="button" className={settings.engine === id ? "is-selected" : ""} aria-pressed={settings.engine === id} disabled={id === "local" && localVoices?.length === 0} onClick={() => choose(id)}><strong>{label}</strong><span>{hint}</span></button>)}
     </fieldset>
     {settings.engine !== "off" ? <div className="narration-controls">
-      <label className="studio-field"><span>Ses</span><select value={settings.voice} disabled={disabled || busy} onChange={(event) => setSettings({ ...settings, voice: event.target.value })}>{voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.label}</option>)}</select></label>
-      <label className="studio-field"><span>Hız · {settings.speed.toFixed(2)}×</span><input type="range" min={0.8} max={1.3} step={0.05} value={settings.speed} disabled={disabled || busy} onChange={(event) => setSettings({ ...settings, speed: Number(event.target.value) })} /></label>
-      <label className="studio-field"><span>Ses düzeyi · %{Math.round(settings.volume * 100)}</span><input type="range" min={0.3} max={1.6} step={0.1} value={settings.volume} disabled={disabled || busy} onChange={(event) => setSettings({ ...settings, volume: Number(event.target.value) })} /></label>
+      <label className="field"><span>Ses</span><select value={settings.voice} disabled={disabled || busy} onChange={(event) => setSettings({ ...settings, voice: event.target.value })}>{voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.label}</option>)}</select></label>
+      <label className="field"><span>Hız · {settings.speed.toFixed(2)}×</span><input type="range" min={0.8} max={1.3} step={0.05} value={settings.speed} disabled={disabled || busy} onChange={(event) => setSettings({ ...settings, speed: Number(event.target.value) })} /></label>
+      <label className="field"><span>Ses düzeyi · %{Math.round(settings.volume * 100)}</span><input type="range" min={0.3} max={1.6} step={0.1} value={settings.volume} disabled={disabled || busy} onChange={(event) => setSettings({ ...settings, volume: Number(event.target.value) })} /></label>
     </div> : null}
     <p className="char-search-note"><ShieldCheck size={13} /> {lines.length ? `${lines.length} çekimde metin var, toplam ${characters.toLocaleString("tr-TR")} karakter.` : "Henüz seslendirme metni yok; çekim düzenleyicisinden ekleyebilirsin."}{settings.engine === "gmi" && characters ? ` Tahmini ${(characters * GMI_RATE / 1000).toLocaleString("tr-TR", { maximumFractionDigits: 3 })} $; kesin fiyat Üretim sekmesindeki teklifte, onayından sonra alınır. Onaylanana kadar filmde taslak Mac sesi kullanılır.` : ""}</p>
     {settings.engine !== "off" ? <ul className="narration-lines">{lines.map((scene) => {
       const seconds = narrationText(scene).length / CHARS_PER_SECOND / settings.speed;
       return <li key={scene.id}><span>{scene.code || scene.order.toString().padStart(2, "0")} · {scene.title}</span><em className={seconds > scene.duration ? "is-long" : ""}>{seconds > scene.duration ? <TriangleAlert size={11} /> : null} ≈ {seconds.toFixed(1)} sn / çekim {scene.duration} sn</em></li>;
     })}</ul> : null}
-    {error ? <p className="studio-dialog-error" role="alert">{error}</p> : null}
-    <button type="button" className="studio-button studio-button-primary" disabled={disabled || busy || !dirty} onClick={() => void save()}>{busy ? <LoaderCircle size={14} className="studio-spin" /> : <Check size={14} />} Dış ses ayarını kaydet</button>
+    {error ? <p className="note note-error" role="alert">{error}</p> : null}
+    <button type="button" className="button button-lamp" disabled={disabled || busy || !dirty} onClick={() => void save()}>{busy ? <LoaderCircle size={14} className="spin" /> : <Check size={14} />} Kaydet</button>
   </section>;
 }

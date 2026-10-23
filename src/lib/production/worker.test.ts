@@ -252,13 +252,13 @@ test("music is mixed into the montage and can be removed again without re-render
   assert.ok(Math.abs(silent.output!.duration - finished.output!.duration) < 0.01);
 });
 
-async function characterSetup(t: { after: (callback: () => Promise<void>) => void }, withPhoto: boolean, extra: RepositoryOptions = {}) {
+async function characterSetup(t: { after: (callback: () => Promise<void>) => void }, withPhoto: boolean, extra: RepositoryOptions = {}, entry: { appearance: string; style: string } = { appearance: "askeri kasket, ince bıyık", style: "stylized 3D caricature" }) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "kadra-char-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const repository = createProjectRepository(directory, { providers: async () => ({ nvidia: true, gmi: true, ffmpeg: true }), referenceImagePrice: async () => 0.041, ...extra });
   const created = await repository.createProject({ title: "Karakter", script, style: "Sinematik", aspectRatio: "16:9", budget: 1 });
   const planned = await repository.planProject(created.id, created.revision, "heuristic");
-  let project = await repository.addCharacter(planned.id, planned.revision, { name: "Lider", appearance: "askeri kasket, ince bıyık", aliases: [], style: "stylized 3D caricature" });
+  let project = await repository.addCharacter(planned.id, planned.revision, { name: "Lider", appearance: entry.appearance, aliases: [], style: entry.style });
   if (withPhoto) {
     const media = path.join(repository.mediaDirectory, project.id);
     await mkdir(media, { recursive: true });
@@ -666,4 +666,72 @@ test("music dips while the narration speaks and comes back after it", { timeout:
   const before = band(1.5);
   const during = band(3.6);
   assert.ok(during < before - 4, `the music is ducked under the voice (${before} dB → ${during} dB)`);
+});
+
+test("worker promptEnhancer upgrades Turkish character traits and repair instructions into English before submitting", { timeout: 120_000 }, async (t) => {
+  const ffmpeg = await findFfmpeg();
+  if (!ffmpeg) return t.skip("FFmpeg yok");
+  const { repository } = await characterSetup(t, true, { repairPrice: async () => 0.0255 });
+  const red = path.join(repository.mediaDirectory, "..", "red-enhanced.png");
+  stillImage(ffmpeg, red, "color=c=red:s=1024x1024");
+  const submittedPrompts: string[] = [];
+  const engine: VideoEngine = {
+    upload: async () => "https://storage.example/file.png",
+    submit: async (_model, payload) => {
+      submittedPrompts.push(String(payload.prompt ?? ""));
+      return `req-${submittedPrompts.length}`;
+    },
+    status: async () => ({ state: "success", mediaUrl: "https://storage.example/out.png" }),
+    download: () => submittedPrompts.length === 1 ? image() : readFile(red),
+  };
+  const verdicts: SheetVerdict[] = [
+    { ok: false, scores: { style: 4, traits: 4, pose: 4, clean: 2 }, note: "sağ elde fazla parmak", issues: [{ problem: "sağ eli düzelt", fix: "sağ eli 5 parmak olacak şekilde düzelt", box: [0.6, 0.6, 0.8, 0.9] }] },
+    { ok: true, scores: { style: 4, traits: 4, pose: 4, clean: 4 }, note: "uygun", issues: [] },
+  ];
+  const worker = createProductionWorker({
+    repository,
+    publicDirectory,
+    imageEngine: () => null,
+    videoEngine: () => engine,
+    sheetJudge: () => async () => verdicts.shift()!,
+    promptEnhancer: () => ({
+      enhanceCharacter: async () => ({
+        appearance: "olive military visor cap, thin neatly trimmed moustache, olive uniform jacket",
+        style: "Stylized 3D feature animation with rich lighting",
+      }),
+      enhanceRepair: async () => "Redraw the right hand cleanly with five natural fingers matching the 3D lighting",
+    }),
+    pollIntervalMs: 5,
+    log: () => {},
+  });
+  await drain(worker);
+  assert.equal(submittedPrompts.length, 2);
+  assert.match(submittedPrompts[0], /Stylized 3D feature animation with rich lighting\. olive military visor cap, thin neatly trimmed moustache/);
+  assert.match(submittedPrompts[1], /Edit only the transparent \(masked\) area.*Redraw the right hand cleanly with five natural fingers/);
+});
+
+test("a monument is drawn as written in the film's shape, and the next attempt is told why the last one was rejected", { timeout: 60_000 }, async (t) => {
+  const { repository, projectId } = await characterSetup(t, true, {}, { appearance: "Three giant stone faces carved into Caucasus mountain peaks, snow, god-rays", style: "Monumental granite sculptures, photorealistic" });
+  const submitted: { prompt: string; aspect: unknown }[] = [];
+  const judged: { framing?: string }[] = [];
+  const engine: VideoEngine = {
+    upload: async () => "https://storage.example/ref.jpg",
+    submit: async (_model, payload) => { submitted.push({ prompt: String(payload.prompt), aspect: payload.aspect_ratio }); return `req-${submitted.length}`; },
+    status: async () => ({ state: "success", mediaUrl: "https://storage.example/sheet.png" }),
+    download: image,
+  };
+  const verdicts = [
+    { ok: false, scores: { style: 4, traits: 2, pose: 2, clean: 4 }, note: "Yalnızca bir yüz var, üç yüz isteniyordu" },
+    { ok: true, scores: { style: 5, traits: 4, pose: 4, clean: 5 }, note: "uygun" },
+  ];
+  const worker = createProductionWorker({ repository, publicDirectory, imageEngine: () => null, videoEngine: () => engine, sheetJudge: () => async (input) => { judged.push({ framing: input.framing }); return verdicts.shift()!; }, pollIntervalMs: 5, log: () => {} });
+  await drain(worker);
+  assert.equal(submitted.length, 2, "one rejection, one passing retry");
+  assert.deepEqual(submitted.map((item) => item.aspect), ["16:9", "16:9"], "a monument is not squeezed into the square cast-sheet shape");
+  for (const item of submitted) assert.doesNotMatch(item.prompt, /Single character|neutral light grey background/);
+  assert.doesNotMatch(submitted[0].prompt, /previous attempt/);
+  assert.match(submitted[1].prompt, /fix exactly that: Yalnızca bir yüz var, üç yüz isteniyordu/);
+  assert.deepEqual(judged.map((item) => item.framing), ["free", "free"], "the judge is told what was asked, not shown a character-sheet checklist");
+  const done = await repository.getProject(projectId);
+  assert.equal(done.ledger[0].actual, 0.082);
 });

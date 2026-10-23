@@ -5,12 +5,14 @@ import path from "node:path";
 import { mediaUrl, projectMediaDirectory, resolveImageFile } from "../media";
 import { titleCardText } from "../planner";
 import { bestAttempt, REFERENCE_MODEL, SHEET_ATTEMPTS, type ProjectRepository, type StepResult } from "../projects";
+import type { CharacterEnhanceInput, EnhancedCharacterTraits, EnhancedShot, PromptEnhanceRequest } from "../providers/deepseek";
 import type { RequestState } from "../providers/gmi";
 import { ProviderError } from "../providers/nvidia";
 import { VIDEO_MODELS } from "../routing/video-router";
 import type { AspectRatio, Box, Character, ImageReview, Project, RunStep, Scene, SheetAttempt, SheetVerdict } from "../types";
 import { AppError } from "../validation";
 import { cameraMove, lookOf } from "../cinema";
+import { resolveFraming, type ResolvedFraming } from "../framing";
 import { GMI_VOICES, LOCAL_VOICE, narrationText, VOICE_LABEL, VOICE_MODEL } from "../voices";
 import { applySoundtrack, compositeRegion, concatClips, convertAudio, FfmpegError, fitImage, inspectAudio, inspectVideo, probeImage, renderImageClip, renderMask, renderTitleClip, renderVideoClip } from "./ffmpeg";
 import { narrationTracks, speakLocally, standInSettings, voiceCandidates, voiceFile, voiceKey } from "./narration";
@@ -36,6 +38,12 @@ export interface ImageEngine {
   review?(request: { image: Buffer; expectation: string; characterSheets?: { name: string; image: Buffer }[] }): Promise<ImageReview>;
 }
 
+export interface WorkerPromptEnhancer {
+  enhanceScene?(input: PromptEnhanceRequest): Promise<EnhancedShot[]>;
+  enhanceCharacter?(input: CharacterEnhanceInput): Promise<EnhancedCharacterTraits>;
+  enhanceRepair?(input: { instruction: string; context?: string; style?: string }): Promise<string>;
+}
+
 export interface WorkerOptions {
   repository: Pick<ProjectRepository, "claimStep" | "completeStep" | "failStep" | "markSubmitting" | "recordRequest" | "extendLease" | "recordSheetAttempt" | "mediaDirectory">;
   publicDirectory: string;
@@ -43,7 +51,9 @@ export interface WorkerOptions {
   imageEngine: () => ImageEngine | null;
   /** Paid GMI jobs: reference-guided character sheets, image-to-video and region repairs. */
   videoEngine?: () => VideoEngine | null;
-  sheetJudge?: () => ((input: { image: Buffer; reference: Buffer | null; name: string; appearance: string; style: string; kind?: Character["kind"] }) => Promise<SheetVerdict>) | null;
+  sheetJudge?: () => ((input: { image: Buffer; reference: Buffer | null; name: string; appearance: string; style: string; kind?: Character["kind"]; framing?: ResolvedFraming }) => Promise<SheetVerdict>) | null;
+  /** Optional DeepSeek prompt enhancer so any unenhanced scene, character sheet or repair instruction is upgraded into English before model submission. */
+  promptEnhancer?: () => WorkerPromptEnhancer | null;
   sheetTimeoutMs?: number;
   pollIntervalMs?: number;
   videoTimeoutMs?: number;
@@ -97,6 +107,42 @@ export function createProductionWorker(options: WorkerOptions) {
     return loaded;
   }
 
+  async function ensureSceneEnhanced(project: Project, scene: Scene): Promise<Scene> {
+    if (scene.kind !== "video" || (scene.promptEn && scene.promptEnSource === scene.prompt)) return scene;
+    const enhancer = options.promptEnhancer?.();
+    if (!enhancer?.enhanceScene) return scene;
+    try {
+      const enhanced = await enhancer.enhanceScene({
+        style: project.style,
+        aspectRatio: project.aspectRatio,
+        genre: project.genre,
+        shots: [{
+          id: scene.id,
+          title: scene.title,
+          description: scene.description,
+          prompt: scene.prompt,
+          motionPrompt: scene.motionPrompt,
+          camera: scene.camera,
+          characters: project.characters
+            .filter((character) => scene.characterIds.includes(character.id))
+            .map((character) => ({ name: character.name, appearance: character.appearance, kind: character.kind })),
+        }],
+      });
+      const hit = enhanced.find((item) => item.id === scene.id) ?? enhanced[0];
+      if (hit?.imagePrompt) {
+        return {
+          ...scene,
+          promptEn: hit.imagePrompt,
+          promptEnSource: scene.prompt,
+          motionPrompt: hit.motionPrompt || scene.motionPrompt,
+        };
+      }
+    } catch {
+      /* Fall back to existing scene prompt when DeepSeek is unreachable. */
+    }
+    return scene;
+  }
+
   /** Waits for a paid job; keeps the step's lease alive while it waits. */
   async function waitFor(engine: VideoEngine, requestId: string, project: Project, runId: string, step: RunStep, timeoutMs: number): Promise<RequestState> {
     const deadline = Date.now() + timeoutMs;
@@ -130,9 +176,15 @@ export function createProductionWorker(options: WorkerOptions) {
         await renderMask({ ...size, boxes, output: mask });
         const imageUrl = await gmi.upload(await readFile(input), "png");
         const maskUrl = await gmi.upload(await readFile(mask), "png");
+        let effectiveInstruction = instruction;
+        const enhancer = options.promptEnhancer?.();
+        if (enhancer?.enhanceRepair) {
+          try { effectiveInstruction = (await enhancer.enhanceRepair({ instruction, style: project.style })) || instruction; }
+          catch { /* Keep original instruction if DeepSeek fails. */ }
+        }
         if (!(await options.repository.markSubmitting(project.id, runId, step.id, "repair"))) throw new AppError(409, "Üretim durdurulduğu için istek gönderilmedi.");
         try {
-          requestId = await gmi.submit(REPAIR_MODEL, { prompt: repairPrompt(instruction), image: imageUrl, mask: maskUrl, size: `${size.width}x${size.height}`, quality: "medium", output_format: "png", n: 1 });
+          requestId = await gmi.submit(REPAIR_MODEL, { prompt: repairPrompt(effectiveInstruction), image: imageUrl, mask: maskUrl, size: `${size.width}x${size.height}`, quality: "medium", output_format: "png", n: 1 });
         } catch (error) {
           const { message, retryable } = failure(error);
           // A clear rejection created no job; a lost connection may have.
@@ -155,15 +207,21 @@ export function createProductionWorker(options: WorkerOptions) {
     const directory = projectMediaDirectory(mediaRoot, project.id);
     const engine = options.imageEngine();
     const expectation = `${scene.description} (Stil: ${project.style})`;
-    const keys = frameKeys(project, scene);
+    const initialKeys = frameKeys(project, scene);
     const run = project.run!;
 
     // A frame is only made again when what it is made from changed, the reviewer flagged it, or every frame was asked for.
     if (!step.paid && !run.regenerateImages && frameIsCurrent(project, scene) && (run.keepFlagged || scene.review?.ok !== false)) {
-      return { kind: "image", url: scene.image, source: "generated", review: scene.review, note: "Kare değişmediği için yeniden üretilmedi.", frameKey: scene.frameKey || keys.flux };
+      return { kind: "image", url: scene.image, source: "generated", review: scene.review, note: "Kare değişmediği için yeniden üretilmedi.", frameKey: scene.frameKey || initialKeys.flux };
     }
 
-    const sheets = await loadCharacterSheets(project, scene);
+    const activeScene = await ensureSceneEnhanced(project, scene);
+    const keys = frameKeys(project, activeScene);
+    const promptUpdates = activeScene.promptEn && activeScene.promptEn !== scene.promptEn
+      ? { promptEn: activeScene.promptEn, promptEnSource: activeScene.promptEnSource, ...(activeScene.motionPrompt !== scene.motionPrompt ? { motionPrompt: activeScene.motionPrompt } : {}) }
+      : {};
+
+    const sheets = await loadCharacterSheets(project, activeScene);
     const sheetRefs = sheets.map(({ character, image }) => ({ name: character.name, image }));
 
     // Paid reference-guided scene frame: approved character sheets and location plates (and, for the same place, the
@@ -175,20 +233,20 @@ export function createProductionWorker(options: WorkerOptions) {
       const fallbackFrame = async (reason: string, ledger: { status: "failed" | "released"; note: string }): Promise<StepResult> => {
         // Paid-only mode never substitutes a free frame: the run fails and the user decides.
         if (paidOnly) throw new AppError(503, `${reason} Ücretli kare üretilemedi; üretim durduruldu.`);
-        if (scene.imageSource === "generated") return { kind: "image", url: scene.image, source: "generated", review: scene.review, note: `${reason} Mevcut kare korundu.`, ledger };
-        if (!engine) return { kind: "image", url: scene.image, source: scene.imageSource, review: null, note: `${reason} Mevcut referans görsel kullanıldı.`, ledger };
-        const generated = await engine.generate({ prompt: imagePrompt(project, scene), aspectRatio: project.aspectRatio, seed: seedFor(`${scene.id}:${runId}`, step.attempts) });
+        if (scene.imageSource === "generated") return { kind: "image", url: scene.image, source: "generated", review: scene.review, note: `${reason} Mevcut kare korundu.`, ...promptUpdates, ledger };
+        if (!engine) return { kind: "image", url: scene.image, source: scene.imageSource, review: null, note: `${reason} Mevcut referans görsel kullanıldı.`, ...promptUpdates, ledger };
+        const generated = await engine.generate({ prompt: imagePrompt(project, activeScene), aspectRatio: project.aspectRatio, seed: seedFor(`${scene.id}:${runId}`, step.attempts) });
         const verdict = await review(engine, generated, expectation, sheetRefs);
         const file = `scene-${scene.id.slice(0, 8)}-${runId.slice(0, 8)}.jpg`;
         await mkdir(directory, { recursive: true });
         await writeFile(path.join(directory, file), generated);
-        return { kind: "image", url: mediaUrl(project.id, file), source: "generated", review: verdict, note: `${reason} Ücretsiz FLUX.2 Klein ile üretildi.`, frameKey: keys.flux, ledger };
+        return { kind: "image", url: mediaUrl(project.id, file), source: "generated", review: verdict, note: `${reason} Ücretsiz FLUX.2 Klein ile üretildi.`, frameKey: keys.flux, ...promptUpdates, ledger };
       };
       let requestId = paid.requestId;
       if (!requestId) {
         if (paid.submittedAt) return fallbackFrame("Önceki kare gönderiminin sonucu belirsiz; yeniden gönderilmedi.", { status: "failed", note: "Gönderim sırasında bağlantı koptu; GMI'da iş oluşmuş olabilir." });
         if (!gmi) return fallbackFrame("GMI bağlantısı bulunamadı.", { status: "released", note: "İstek gönderilmedi; ayrılan tutar bütçeye döndü." });
-        const previous = continuityFrame(project, scene);
+        const previous = continuityFrame(project, activeScene);
         const previousImage = previous ? await readFile(resolveImageFile(previous, { publicDirectory: options.publicDirectory, mediaDirectory: mediaRoot })).catch(() => null) : null;
         const references = [...sheets.map((item) => item.image).slice(0, spec.maxReferences - (previousImage ? 1 : 0)), ...(previousImage ? [previousImage] : [])];
         const imageUrls = await Promise.all(references.map((image) => gmi.upload(image, image[0] === 0x89 ? "png" : "jpg")));
@@ -196,8 +254,8 @@ export function createProductionWorker(options: WorkerOptions) {
         try {
           const usedSheets = sheets.slice(0, Math.max(0, references.length - (previousImage ? 1 : 0)));
           const compiled = usedSheets.length
-            ? compileScenePrompt(project, scene, usedSheets.map((item) => item.character), Boolean(previousImage), spec.maxPrompt)
-            : compileImagePrompt(project, scene, spec.maxPrompt);
+            ? compileScenePrompt(project, activeScene, usedSheets.map((item) => item.character), Boolean(previousImage), spec.maxPrompt)
+            : compileImagePrompt(project, activeScene, spec.maxPrompt);
           requestId = await gmi.submit(spec.id, spec.payload({
             prompt: compiled.prompt,
             imageUrls,
@@ -231,13 +289,14 @@ export function createProductionWorker(options: WorkerOptions) {
         note: `${sheets.length ? `Onaylı sayfalar (${sheets.map((item) => item.character.name).join(", ")}) referans alınarak ` : ""}${spec.label} ile üretildi.${verdict?.note ? ` Kontrol: ${verdict.note}` : ""}${repairHint}`,
         frameKey: keys.reference ?? keys.flux,
         frameModel: spec.id,
+        ...promptUpdates,
         ledger: { status: "charged", note: `GMI isteği ${requestId} tamamlandı.` },
       };
     }
 
     if (paidOnly) throw new AppError(503, "Ücretsiz kare üretimi kapalı; kare bu teklifte yer almıyor.");
     if (!engine) return { kind: "image", url: scene.image, source: scene.imageSource, review: null, note: "NVIDIA anahtarı tanımlı olmadığı için mevcut görsel kullanıldı." };
-    const prompt = imagePrompt(project, scene);
+    const prompt = imagePrompt(project, activeScene);
     let image = await engine.generate({ prompt, aspectRatio: project.aspectRatio, seed: seedFor(`${scene.id}:${runId}`, step.attempts) });
     let verdict = await review(engine, image, expectation, sheetRefs);
     let note = verdict?.note ? `Kontrol: ${verdict.note}` : "";
@@ -253,7 +312,7 @@ export function createProductionWorker(options: WorkerOptions) {
     const file = `scene-${scene.id.slice(0, 8)}-${runId.slice(0, 8)}.jpg`;
     await mkdir(directory, { recursive: true });
     await writeFile(path.join(directory, file), image);
-    return { kind: "image", url: mediaUrl(project.id, file), source: "generated", review: verdict, note, frameKey: keys.flux };
+    return { kind: "image", url: mediaUrl(project.id, file), source: "generated", review: verdict, note, frameKey: keys.flux, ...promptUpdates };
   }
 
   /** The clip the film uses for a shot: an earlier paid clip of this exact frame and motion, else its camera-move or title clip. */
@@ -286,15 +345,17 @@ export function createProductionWorker(options: WorkerOptions) {
       return { kind: "video", note, ledger };
     };
     const engine = options.videoEngine?.() ?? null;
+    let activeScene = scene;
     let requestId = paid.requestId;
     if (!requestId) {
       if (paid.submittedAt) return fallback("Önceki gönderimin sonucu belirsiz; çift ücret olmaması için yeniden gönderilmedi.", { status: "failed", note: "Gönderim sırasında bağlantı koptu; GMI'da iş oluşmuş ve ücretlendirilmiş olabilir. Konsoldan kontrol edin." });
       if (!engine || !spec) return fallback("GMI bağlantısı kullanılamadığı için ücretsiz kamera hareketi kullanıldı.", { status: "released", note: "İstek gönderilmedi; ayrılan tutar bütçeye döndü." });
+      activeScene = await ensureSceneEnhanced(project, scene);
       const imageUrl = await engine.upload(await readFile(image), image.endsWith(".png") ? "png" : "jpg");
       if (!(await options.repository.markSubmitting(project.id, runId, step.id))) throw new AppError(409, "Üretim durdurulduğu için istek gönderilmedi.");
-      const duration = spec.durations.find((value) => value >= scene.duration) ?? spec.durations[spec.durations.length - 1];
+      const duration = spec.durations.find((value) => value >= activeScene.duration) ?? spec.durations[spec.durations.length - 1];
       try {
-        requestId = await engine.submit(spec.id, spec.payload({ prompt: compileVideoPrompt(project, scene, spec.maxPrompt).prompt, imageUrl, duration, aspectRatio: project.aspectRatio, seed: seedFor(`${scene.id}:${runId}`, 0), camera: cameraMove(scene.camera).id }));
+        requestId = await engine.submit(spec.id, spec.payload({ prompt: compileVideoPrompt(project, activeScene, spec.maxPrompt).prompt, imageUrl, duration, aspectRatio: project.aspectRatio, seed: seedFor(`${activeScene.id}:${runId}`, 0), camera: cameraMove(activeScene.camera).id }));
       } catch (error) {
         const { message, retryable } = failure(error);
         // A clear rejection created no job; a lost connection may have.
@@ -342,6 +403,12 @@ export function createProductionWorker(options: WorkerOptions) {
     return boxes.length ? { attempt: best, boxes, instruction: issueInstruction(best.verdict.issues ?? []) } : null;
   }
 
+  /** Why the judge turned down this run's latest attempt, so the next one is told what to fix instead of repeating the mistake. */
+  function lastRejection(attempts: SheetAttempt[]): string {
+    const latest = attempts.at(-1);
+    return latest?.verdict && !latest.verdict.ok ? latest.verdict.note : "";
+  }
+
   async function characterStep(project: Project, runId: string, step: RunStep): Promise<StepResult> {
     const character = project.characters.find((item) => item.id === step.characterId);
     if (!character) throw new AppError(400, "Adımın karakteri projede bulunamadı.");
@@ -351,8 +418,31 @@ export function createProductionWorker(options: WorkerOptions) {
     const earlier = character.sheet.attempts.filter((attempt) => attempt.runId === runId);
     const result = (note: string, extra: Partial<{ uncertain: boolean; failedSubmissions: number }> = {}): StepResult => ({ kind: "character", note, uncertain: false, failedSubmissions: 0, ...extra });
     if (earlier.some((attempt) => attempt.verdict?.ok)) return result("");
-    // A cast sheet is square; a location plate is framed like the film.
-    const aspectRatio: AspectRatio = character.kind === "place" ? project.aspectRatio : "1:1";
+    // What the entry is drawn as is decided once, from what the user wrote, and used for the prompt, the picture shape and the judge.
+    const framing = resolveFraming(character);
+    // A plain cast sheet is square; a place, a monument, a creature or a group is framed like the film.
+    const aspectRatio: AspectRatio = framing === "free" ? project.aspectRatio : "1:1";
+    let sheetTarget: Character = { ...character, framing };
+    const enhancer = options.promptEnhancer?.();
+    if (enhancer?.enhanceCharacter) {
+      try {
+        const upgraded = await enhancer.enhanceCharacter({
+          name: character.name,
+          appearance: character.appearance,
+          style: character.style || project.style,
+          kind: character.kind,
+          withReference: Boolean(reference),
+        });
+        sheetTarget = {
+          ...character,
+          framing,
+          appearance: upgraded.appearance || character.appearance,
+          style: upgraded.style || character.style,
+        };
+      } catch {
+        /* Fall back to user-entered traits when DeepSeek is unreachable. */
+      }
+    }
     const attempts = [...earlier];
     let made = earlier.length;
     let requestId = step.paid?.requestId ?? null;
@@ -387,7 +477,7 @@ export function createProductionWorker(options: WorkerOptions) {
             const referenceUrls = reference ? [await engine.upload(reference, reference[0] === 0x89 ? "png" : "jpg")] : [];
             if (!(await options.repository.markSubmitting(project.id, runId, step.id))) throw new AppError(409, "Üretim durdurulduğu için istek gönderilmedi.");
             try {
-              requestId = await engine.submit(REFERENCE_MODEL, { prompt: sheetPrompt(project, character), ...(referenceUrls.length ? { image: referenceUrls } : {}), image_size: "1K", aspect_ratio: aspectRatio, thinking: "medium", image_output_format: "png" });
+              requestId = await engine.submit(REFERENCE_MODEL, { prompt: sheetPrompt(project, sheetTarget, lastRejection(attempts)), ...(referenceUrls.length ? { image: referenceUrls } : {}), image_size: "1K", aspect_ratio: aspectRatio, thinking: "medium", image_output_format: "png" });
             } catch (error) {
               const { message, retryable } = failure(error);
               return retryable ? result("Gönderimin sonucu belirsiz; yeniden gönderilmedi.", { uncertain: true }) : result(`GMI isteği reddetti: ${message}`);
@@ -403,7 +493,7 @@ export function createProductionWorker(options: WorkerOptions) {
       } else {
         const flux = options.imageEngine();
         if (!flux) return result("NVIDIA anahtarı tanımlı değil; fotoğrafsız karakter üretilemedi.");
-        try { image = await flux.generate({ prompt: sheetPrompt(project, character), aspectRatio, seed: seedFor(`${character.id}:${runId}`, made) }); }
+        try { image = await flux.generate({ prompt: sheetPrompt(project, sheetTarget, lastRejection(attempts)), aspectRatio, seed: seedFor(`${character.id}:${runId}`, made) }); }
         catch (error) {
           const { message, retryable } = failure(error);
           if (retryable) throw error;
@@ -415,7 +505,7 @@ export function createProductionWorker(options: WorkerOptions) {
       await writeFile(path.join(directory, file), image);
       let verdict: SheetVerdict | null = null;
       if (judge) {
-        try { verdict = await judge({ image, reference, name: character.name, appearance: character.appearance, style: character.style || project.style, kind: character.kind }); }
+        try { verdict = await judge({ image, reference, name: character.name, appearance: character.appearance, style: character.style || project.style, kind: character.kind, framing }); }
         catch { verdict = null; }
       }
       const attempt = { id: randomUUID(), url: mediaUrl(project.id, file), at: new Date().toISOString(), engine: engineLabel, verdict, cost };
@@ -515,7 +605,7 @@ export function createProductionWorker(options: WorkerOptions) {
     } else if (character) {
       const judge = options.sheetJudge?.() ?? null;
       const reference = character.reference ? await readFile(path.join(directory, character.reference.file)).catch(() => null) : null;
-      if (judge) verdict = await judge({ image: outcome.image, reference, name: character.name, appearance: character.appearance, style: character.style || project.style, kind: character.kind }).catch(() => null);
+      if (judge) verdict = await judge({ image: outcome.image, reference, name: character.name, appearance: character.appearance, style: character.style || project.style, kind: character.kind, framing: resolveFraming(character) }).catch(() => null);
     }
     const check = reviewed?.note ?? verdict?.note;
     return {

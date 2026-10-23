@@ -202,6 +202,17 @@ export async function applySoundtrack({ film, output, duration, music, voices = 
   await ffmpeg([...inputs, ...audio, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", duration.toFixed(2), "-movflags", "+faststart", path.resolve(output)], path.dirname(path.resolve(output)));
 }
 
+/**
+ * Re-frames a finished film for another screen. "fit" keeps the whole picture and fills the rest with a blurred copy of
+ * it; "fill" crops from the centre. The sound is copied untouched. Free: it only re-encodes the picture on this computer.
+ */
+export async function exportFilm({ input, output, width, height, mode }: { input: string; output: string; width: number; height: number; mode: "fit" | "fill" }): Promise<void> {
+  const filter = mode === "fill"
+    ? `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos,crop=${width}:${height},setsar=1,format=yuv420p[v]`
+    : `[0:v]split=2[a][b];[a]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},gblur=sigma=36[bg];[b]scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p[v]`;
+  await ffmpeg(["-i", path.resolve(input), "-filter_complex", filter, "-map", "[v]", "-map", "0:a?", ...ENCODE, "-c:a", "copy", "-movflags", "+faststart", path.resolve(output)], path.dirname(path.resolve(output)), 600_000);
+}
+
 /** Reads an image's pixel size. */
 export async function probeImage(file: string): Promise<{ width: number; height: number }> {
   const log = await ffmpeg(["-v", "info", "-i", path.resolve(file), "-frames:v", "1", "-f", "null", "-"], path.dirname(path.resolve(file)));

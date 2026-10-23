@@ -1,4 +1,5 @@
-import type { ImageReview, SheetVerdict, WikimediaResult } from "../types";
+import { genreOf } from "../cinema";
+import type { AspectRatio, ImageReview, SheetVerdict, WikimediaResult } from "../types";
 import { extractJson, parseAiPlan, parseReview, parseSheetVerdict, planInstructions, ProviderError, reviewQuestion, sheetCriteria, type AiPlan, type PlanRequest } from "./nvidia";
 
 /**
@@ -253,8 +254,218 @@ export async function reviewImageWithDeepSeek({ image, expectation, characterShe
 }
 
 /** Judges a character sheet with deepseek-flash Vision against the requested style, traits, and optional reference photo. */
-export async function judgeSheetWithDeepSeek({ image, reference, name, appearance, style, kind }: { image: Buffer; reference: Buffer | null; name: string; appearance: string; style: string; kind?: "person" | "place" }): Promise<SheetVerdict> {
-  const criteria = sheetCriteria({ name, appearance, style, withReference: Boolean(reference), kind });
+export async function judgeSheetWithDeepSeek({ image, reference, name, appearance, style, kind, framing }: { image: Buffer; reference: Buffer | null; name: string; appearance: string; style: string; kind?: "person" | "place"; framing?: "sheet" | "free" }): Promise<SheetVerdict> {
+  const criteria = sheetCriteria({ name, appearance, style, withReference: Boolean(reference), kind, framing });
   const content = [{ type: "text", text: criteria }, imageBlock(image), ...(reference ? [imageBlock(reference, "low")] : [])];
   return parseSheetVerdict(await chat(DEEPSEEK_MODELS.flash, [{ role: "user", content }], 1_000, 60_000));
+}
+
+export interface ShotEnhanceItem {
+  id: string;
+  title: string;
+  description: string;
+  prompt: string;
+  motionPrompt?: string;
+  camera?: string;
+  characters?: { name: string; appearance: string; kind?: "person" | "place" }[];
+}
+
+export interface PromptEnhanceRequest {
+  style: string;
+  aspectRatio: AspectRatio;
+  genre?: string;
+  shots: ShotEnhanceItem[];
+}
+
+export interface EnhancedShot {
+  id: string;
+  imagePrompt: string;
+  motionPrompt: string;
+}
+
+export function parseEnhancedShots(content: string, requestedIds: string[] = []): EnhancedShot[] {
+  try {
+    const raw = extractJson(content) as Record<string, unknown>;
+    const list = Array.isArray(raw.shots)
+      ? raw.shots
+      : (typeof raw.image_prompt === "string" || typeof raw.imagePrompt === "string")
+        ? [raw]
+        : [];
+    const results: EnhancedShot[] = [];
+    list.forEach((item, index) => {
+      if (!item || typeof item !== "object") return;
+      const entry = item as Record<string, unknown>;
+      const id = typeof entry.id === "string" && entry.id.trim()
+        ? entry.id.trim()
+        : requestedIds[index] ?? "";
+      const imagePrompt = (typeof entry.image_prompt === "string" ? entry.image_prompt : typeof entry.imagePrompt === "string" ? entry.imagePrompt : "").trim().slice(0, 2_500);
+      const motionPrompt = (typeof entry.motion_prompt === "string" ? entry.motion_prompt : typeof entry.motionPrompt === "string" ? entry.motionPrompt : "").trim().slice(0, 900);
+      if (id && imagePrompt) results.push({ id, imagePrompt, motionPrompt });
+    });
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+async function enhanceShotBatch(input: PromptEnhanceRequest): Promise<EnhancedShot[]> {
+  if (!input.shots.length) return [];
+  const chosen = genreOf(input.genre ?? "");
+  const payload = input.shots.map((shot) => ({
+    id: shot.id,
+    title: shot.title,
+    description: shot.description,
+    user_prompt: shot.prompt,
+    motion_hint: shot.motionPrompt ?? "",
+    camera: shot.camera ?? "",
+    cast_and_locations: (shot.characters ?? []).map((item) => `${item.name} (${item.kind === "place" ? "location" : "character"}): ${item.appearance}`),
+  }));
+  const prompt = `Sen dünyaca ünlü bir görüntü yönetmeni (DoP) ve yapay zekâ görsel/video prompt mühendisisin.
+Kullanıcı çekim açıklamalarını veya promptlarını günlük konuşma diliyle, kısa, devrik veya yazım hatalı Türkçe (ya da karışık Türkçe/İngilizce) yazmış olabilir.
+Görevin: Her çekimi arka planda görsel ve video üretim modellerinin tek seferde muhteşem, sinematik bir çıktı üreteceği profesyonel İngilizce promptlara dönüştürmek.
+
+Kurallar:
+- Kullanıcının istediği sahneyi, olayı, duygusal tonu ve bağlı karakter/mekân özelliklerini birebir koru; senaryoda olmayan alakasız olay uydurma.
+- image_prompt: Yalnızca İngilizce. Konuyu, karakterlerin duruş ve yüz ifadesini, mekân detaylarını, kamera açısını ve lens derinliğini (ör. 35mm anamorphic, shallow depth of field), ışık yönünü ve rengini (ör. volumetric golden hour rim light, moody chiaroscuro), atmosferi ve dokuları zengin bir sinema diliyle betimle. Görsel stil: "${input.style}", kadraj oranı: ${input.aspectRatio}.${chosen.id ? ` Tür: ${chosen.label} (${chosen.mood}).` : ""}
+- motion_prompt: Yalnızca İngilizce, 1-2 cümle. Kamera hareketini ve karedeki doğal fiziksel hareketi (rüzgâr, adım, bakış, ışık değişimi) akıcı biçimde tarif et.
+- Görsel içinde yazı, altyazı veya filigran isteme.
+
+Yalnızca şu JSON yapısını döndür, başka açıklama yazma:
+{"shots":[{"id":"","image_prompt":"","motion_prompt":""}]}
+
+ÇEKİMLER:
+${JSON.stringify(payload)}`;
+  const ids = input.shots.map((shot) => shot.id);
+  try {
+    const parsed = parseEnhancedShots(await chat(DEEPSEEK_MODELS.flash, [{ role: "user", content: prompt }], 4_000, 60_000), ids);
+    if (parsed.length) return parsed;
+  } catch (error) {
+    if (error instanceof ProviderError && !error.retryable) throw error;
+  }
+  return parseEnhancedShots(await chat(DEEPSEEK_MODELS.pro, [{ role: "user", content: prompt }], 4_000, 90_000), ids);
+}
+
+/**
+ * Upgrades user-written Turkish or rough shot descriptions/prompts in the background into cinema-grade
+ * English image and motion prompts using DeepSeek (`deepseek-flash` with `deepseek-v4-pro` fallback).
+ */
+export async function enhanceShotsWithDeepSeek(input: PromptEnhanceRequest): Promise<EnhancedShot[]> {
+  const valid = input.shots.filter((shot) => shot.prompt.trim() || shot.description.trim());
+  if (!valid.length) return [];
+  const results: EnhancedShot[] = [];
+  for (let index = 0; index < valid.length; index += 10) {
+    const chunk = valid.slice(index, index + 10);
+    const enhanced = await enhanceShotBatch({ ...input, shots: chunk });
+    results.push(...enhanced);
+  }
+  return results;
+}
+
+export interface CharacterEnhanceInput {
+  name: string;
+  appearance: string;
+  style: string;
+  kind?: "person" | "place";
+  withReference?: boolean;
+}
+
+export interface EnhancedCharacterTraits {
+  appearance: string;
+  style: string;
+}
+
+export function parseEnhancedCharacter(content: string, fallback: EnhancedCharacterTraits): EnhancedCharacterTraits {
+  try {
+    const raw = extractJson(content) as Record<string, unknown>;
+    const appearance = (typeof raw.appearance === "string" ? raw.appearance : typeof raw.gorunus === "string" ? raw.gorunus : "").trim().slice(0, 700);
+    const style = (typeof raw.style === "string" ? raw.style : typeof raw.stil === "string" ? raw.stil : "").trim().slice(0, 200);
+    return {
+      appearance: appearance || fallback.appearance,
+      style: style || fallback.style,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Translates and upgrades a Turkish or colloquial character/location description and style into
+ * studio-grade English reference-sheet traits for the image generator.
+ */
+export async function enhanceCharacterWithDeepSeek(input: CharacterEnhanceInput): Promise<EnhancedCharacterTraits> {
+  const fallback = { appearance: input.appearance.trim(), style: input.style.trim() };
+  if (!fallback.appearance && !fallback.style) return fallback;
+  const isPlace = input.kind === "place";
+  const prompt = `Sen bir film stüdyosunun konsept sanat yönetmenisin.
+Kullanıcının günlük veya kısa Türkçe ile yazdığı ${isPlace ? "mekân" : "karakter"} tarifini ve görsel stili, görsel üretim modelinin (${input.withReference ? "referans fotoğrafı da koruyarak " : ""}stüdyo kalitesinde bir ${isPlace ? "mekân referans plakası" : "karakter referans sayfası"} çizeceği) profesyonel İngilizce betimlemeye dönüştür.
+
+Girdi:
+- Ad: "${input.name}"
+- Tür: ${isPlace ? "Mekân (place)" : "Karakter (person)"}
+- Kullanıcı tarifi: "${fallback.appearance}"
+- İstenen stil: "${fallback.style}"
+
+Kurallar:
+- Kullanıcının belirttiği hiçbir fiziksel özelliği (yaş, bıyık/sakal, kasket/başlık, kıyafet, renk, mimari detay) atlama; çelişen özellik ekleme.
+- appearance: Yalnızca İngilizce, 1-3 yoğun cümle. ${isPlace ? "Mimari yapıyı, malzemeleri, ışık-gölge atmosferini, renk paletini ve belirgin çevre unsurlarını" : "Yüz hatlarını, yaşını, saç/sakal/bıyık yapısını, başlık/aksesuarlarını, kıyafet kesimini, kumaş dokusunu ve renklerini"} net ve görsel olarak betimle.
+- style: Yalnızca İngilizce, kısa ve net sanatsal stil tanımı (ör. "Cinematic realistic concept art, finely textured brushwork" veya "Stylized 3D feature animation, rich subsurface scattering").
+
+Yalnızca geçerli JSON döndür:
+{"appearance":"","style":""}`;
+  try {
+    return parseEnhancedCharacter(await chat(DEEPSEEK_MODELS.flash, [{ role: "user", content: prompt }], 800, 30_000), fallback);
+  } catch (error) {
+    if (error instanceof ProviderError && !error.retryable) throw error;
+    try {
+      return parseEnhancedCharacter(await chat(DEEPSEEK_MODELS.pro, [{ role: "user", content: prompt }], 800, 45_000), fallback);
+    } catch {
+      return fallback;
+    }
+  }
+}
+
+export function parseEnhancedRepair(content: string, fallback: string): string {
+  try {
+    const raw = extractJson(content) as Record<string, unknown>;
+    const text = (typeof raw.instruction === "string" ? raw.instruction : typeof raw.prompt === "string" ? raw.prompt : typeof raw.duzeltme === "string" ? raw.duzeltme : "").trim().slice(0, 550);
+    return text || fallback.trim().slice(0, 550);
+  } catch {
+    return fallback.trim().slice(0, 550);
+  }
+}
+
+/**
+ * Converts a user's colloquial Turkish region-repair instruction into a precise English masked-inpainting command.
+ */
+export async function enhanceRepairWithDeepSeek(input: { instruction: string; context?: string; style?: string }): Promise<string> {
+  const raw = input.instruction.trim();
+  if (!raw) return "";
+  const prompt = `Sen bir görsel onarım (inpainting) uzmanısın.
+Kullanıcı bir sahne veya karakter karesindeki işaretli (maskeli) bölgeyi düzeltmek için Türkçe veya günlük dille şu talimatı verdi:
+"${raw}"
+${input.context ? `Görsel bağlamı: "${input.context.slice(0, 400)}"` : ""}
+${input.style ? `Görsel stili: "${input.style.slice(0, 160)}"` : ""}
+
+Görevin: Maskeli bölgede tam olarak ne çizilmesi veya düzeltilmesi gerektiğini anlatan, görsel düzenleme modeline verilecek net, kısa ve profesyonel bir İngilizce talimat (instruction) yazmak.
+Yalnızca geçerli JSON döndür:
+{"instruction":""}`;
+  try {
+    return parseEnhancedRepair(await chat(DEEPSEEK_MODELS.flash, [{ role: "user", content: prompt }], 400, 25_000), raw);
+  } catch (error) {
+    if (error instanceof ProviderError && !error.retryable) throw error;
+    try {
+      return parseEnhancedRepair(await chat(DEEPSEEK_MODELS.pro, [{ role: "user", content: prompt }], 400, 35_000), raw);
+    } catch {
+      return raw.slice(0, 550);
+    }
+  }
+}
+
+/** A plain JSON-answering completion (flash first, pro when flash is saturated); used by the director assistant. */
+export async function completeWithDeepSeek(prompt: string, maxTokens = 6_000): Promise<string> {
+  try { return await chat(DEEPSEEK_MODELS.flash, [{ role: "user", content: prompt }], maxTokens, 90_000); }
+  catch (error) {
+    if (error instanceof ProviderError && !error.retryable) throw error;
+    return chat(DEEPSEEK_MODELS.pro, [{ role: "user", content: prompt }], maxTokens, 120_000);
+  }
 }

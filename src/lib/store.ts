@@ -1,7 +1,7 @@
 import path from "node:path";
 import { createProjectRepository } from "./projects";
-import { deepseekConfigured, planWithDeepSeek } from "./providers/deepseek";
-import { nvidiaConfigured, planWithNemotron, type PlanRequest } from "./providers/nvidia";
+import { completeWithDeepSeek, deepseekConfigured, enhanceShotsWithDeepSeek, planWithDeepSeek, type PromptEnhanceRequest } from "./providers/deepseek";
+import { completeWithNemotron, nvidiaConfigured, planWithNemotron, ProviderError, type PlanRequest } from "./providers/nvidia";
 import { providerStatus } from "./providers/status";
 import { loadFramePrices, loadReferenceImagePrice, loadRepairPrice, loadVideoPrices, loadVoicePrice } from "./routing/prices";
 
@@ -11,6 +11,21 @@ async function aiPlanner(request: PlanRequest) {
     catch (error) { if (!nvidiaConfigured()) throw error; }
   }
   return planWithNemotron(request);
+}
+
+/** DeepSeek first, the free NVIDIA planner when DeepSeek is missing or fails. */
+async function assistant(prompt: string) {
+  if (deepseekConfigured()) {
+    try { return await completeWithDeepSeek(prompt); }
+    catch (error) { if (!nvidiaConfigured()) throw error; }
+  }
+  if (!nvidiaConfigured()) throw new ProviderError("Asistan için DeepSeek ya da NVIDIA anahtarı gerekli.", false);
+  return completeWithNemotron(prompt);
+}
+
+async function promptEnhancer(request: PromptEnhanceRequest) {
+  if (!deepseekConfigured()) return [];
+  return enhanceShotsWithDeepSeek(request);
 }
 
 /** Optional ceiling for all paid spend, in USD; unset or non-positive means no extra ceiling. */
@@ -26,5 +41,5 @@ function paymentsDisabled(): boolean {
 }
 
 /** The application's single local store; tests build their own repositories instead. */
-export const repository = createProjectRepository(process.env.KADRA_DATA_DIR || path.join(process.cwd(), ".data"), { providers: providerStatus, aiPlanner, videoPrices: loadVideoPrices, referenceImagePrice: loadReferenceImagePrice, repairPrice: loadRepairPrice, framePrices: loadFramePrices, voicePrice: loadVoicePrice, spendLimit, paymentsDisabled, paidOnly: true });
+export const repository = createProjectRepository(process.env.KADRA_DATA_DIR || path.join(process.cwd(), ".data"), { providers: providerStatus, aiPlanner, assistant, promptEnhancer, videoPrices: loadVideoPrices, referenceImagePrice: loadReferenceImagePrice, repairPrice: loadRepairPrice, framePrices: loadFramePrices, voicePrice: loadVoicePrice, spendLimit, paymentsDisabled, paidOnly: true });
 export const publicDirectory = path.join(process.cwd(), "public");

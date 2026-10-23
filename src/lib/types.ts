@@ -63,6 +63,8 @@ export interface CharacterSheet {
 
 export interface Character {
   id: string;
+  /** How the picture is composed: a plain reference sheet, exactly what the text says, or decided from the text. */
+  framing: "auto" | "sheet" | "free";
   /** A cast member, or a location whose reference plate keeps sets consistent across shots. */
   kind: "person" | "place";
   name: string;
@@ -107,6 +109,9 @@ export interface Scene {
   title: string;
   description: string;
   prompt: string;
+  /** English rendering of `prompt` made for the paid models; only valid while `promptEnSource` equals `prompt`. */
+  promptEn: string;
+  promptEnSource: string;
   motionPrompt: string;
   duration: number;
   camera: string;
@@ -121,6 +126,8 @@ export interface Scene {
   frameKey: string;
   /** The paid frame model that drew the current frame; "" for free FLUX frames. */
   frameModel: string;
+  /** How each linked character feels in this shot: character id → emotion id (see EMOTIONS). */
+  emotions: Record<string, string>;
   repair: FrameRepair | null;
   characterIds: string[];
   narration: string;
@@ -222,6 +229,8 @@ export interface ReusedLine {
 }
 
 export interface Quote {
+  /** Production scope authorized by this quote; old saved quotes default to film. */
+  target: "frames" | "film";
   id: string;
   createdAt: string;
   expiresAt: string;
@@ -230,6 +239,8 @@ export interface Quote {
   lines: QuoteLine[];
   reused: ReusedLine[];
   errors: string[];
+  /** Things that will not stop the run but will probably hurt the result, e.g. people drawn without an approved reference. */
+  warnings: string[];
   total: number;
   budget: number;
   committed: number;
@@ -281,6 +292,8 @@ export interface Project {
   aspectRatio: AspectRatio;
   /** Story conventions (see GENRES); "" is general. */
   genre: string;
+  /** Standing production notes (tone, do's and don'ts) added to every prompt of the film. */
+  brief: string;
   /** Colour/era grade applied at montage (see LOOKS). */
   look: string;
   duration: number;
@@ -307,6 +320,30 @@ export interface Project {
   isExample: boolean;
 }
 
+/** The fields of a shot the director assistant may change. */
+export interface AssistantScenePatch {
+  title?: string;
+  description?: string;
+  prompt?: string;
+  motionPrompt?: string;
+  camera?: string;
+  duration?: number;
+  narration?: string;
+  emotions?: Record<string, string>;
+}
+
+export interface AssistantProjectPatch { genre?: string; look?: string; brief?: string }
+
+export interface ProposedChange { sceneId: string; order: number; title: string; set: AssistantScenePatch; before: AssistantScenePatch }
+
+/** What the assistant would change. Nothing is saved until the user applies it. */
+export interface AssistantProposal {
+  reply: string;
+  changes: ProposedChange[];
+  project: AssistantProjectPatch | null;
+  projectBefore: AssistantProjectPatch | null;
+}
+
 export interface RepairEstimate {
   model: string;
   modelLabel: string;
@@ -324,6 +361,7 @@ export interface CreateProjectInput {
   budget: number | null;
   genre?: string;
   look?: string;
+  brief?: string;
 }
 
 export interface ModelProfile {

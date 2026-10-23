@@ -75,3 +75,71 @@ export const LOOKS: Look[] = [
 ];
 
 export const lookOf = (id: string) => LOOKS.find((look) => look.id === id) ?? LOOKS[0];
+
+export interface Emotion { id: string; label: string; prompt: string }
+
+/** How a character feels in a shot; the English phrase is what the models are given. */
+export const EMOTIONS: Emotion[] = [
+  { id: "", label: "Belirtilmemiş", prompt: "" },
+  { id: "happy", label: "Mutlu", prompt: "looks happy, a warm genuine smile" },
+  { id: "sad", label: "Üzgün", prompt: "looks sad, downcast eyes" },
+  { id: "afraid", label: "Korkmuş", prompt: "looks frightened, wide eyes, tense posture" },
+  { id: "angry", label: "Kızgın", prompt: "looks angry, furrowed brow, clenched jaw" },
+  { id: "surprised", label: "Şaşkın", prompt: "looks surprised, raised eyebrows, open mouth" },
+  { id: "tense", label: "Gergin", prompt: "looks tense and anxious, guarded body language" },
+  { id: "determined", label: "Kararlı", prompt: "looks determined, steady focused gaze" },
+  { id: "calm", label: "Sakin", prompt: "looks calm and relaxed, soft expression" },
+  { id: "hopeful", label: "Umutlu", prompt: "looks hopeful, eyes lifted toward the light" },
+];
+
+export const emotionOf = (id: string) => EMOTIONS.find((emotion) => emotion.id === id) ?? EMOTIONS[0];
+
+export interface StylePreset {
+  id: string;
+  label: string;
+  /** One short line shown under the chip. */
+  blurb: string;
+  style: string;
+  genre: string;
+  look: string;
+  /** Standing production notes added to every prompt of the film. */
+  brief: string;
+  /** A one-sentence idea in this style, so the first film starts in seconds. */
+  idea: string;
+}
+
+/**
+ * One click sets the whole look of a film: drawing style, genre, colour grade and standing notes.
+ * Presets only fill in project settings; nothing is generated or paid for by choosing one.
+ */
+export const PRESETS: StylePreset[] = [
+  { id: "cinematic", label: "Sinematik dram", blurb: "Gerçekçi, ağır ritim", style: "Sinematik", genre: "drama", look: "teal-orange",
+    brief: "Gerçekçi sinema görüntüsü, doğal ışık, sığ alan derinliği, yavaş ve sakin ritim. Abartılı efekt ve çizgi film havası olmasın.",
+    idea: "Yağmurlu bir akşam, yaşlı bir saatçi dükkânını son kez kapatırken kapıdan beklenmedik bir misafir girer." },
+  { id: "anime", label: "Anime macera", blurb: "Canlı renk, hareketli kadraj", style: "Anime", genre: "epic", look: "warm",
+    brief: "Canlı renkler, ifadeli büyük gözler, dinamik kadrajlar ve hız çizgileri. Tutarlı çizgi kalınlığı.",
+    idea: "Genç bir haritacı kız, uçan adaların arasında kaybolmuş babasının pusulasını arar." },
+  { id: "noir", label: "Kara film", blurb: "Siyah beyaz, uzun gölgeler", style: "Sinematik", genre: "drama", look: "noir",
+    brief: "Siyah beyaz, sert kontrast, uzun gölgeler, yağmurlu ıslak sokaklar, sigara dumanı. Ağır bir sessizlik.",
+    idea: "Gece yarısı, bir dedektif eski bir ofiste kayıp bir mektubun izini sürer." },
+  { id: "horror", label: "Korku", blurb: "Karanlık, huzursuz", style: "Gerçekçi", genre: "horror", look: "cold",
+    brief: "Düşük ışık, derin gölgeler, soğuk tonlar. Tehdit hep ekranın kenarında, tam görünmeden hissedilir.",
+    idea: "Terk edilmiş bir fener kulesinde, her gece aynı saatte merdivenden ayak sesleri gelir." },
+  { id: "documentary", label: "Belgesel", blurb: "Gözlemci, doğal", style: "Belgesel", genre: "documentary", look: "none",
+    brief: "Gözlemci kamera, doğal ışık, süslenmemiş kadrajlar. Konuşan değil izleyen bir bakış.",
+    idea: "Küçük bir balıkçı köyünde sabahın ilk saatleri: ağlar, tekneler ve bir çay ocağı." },
+  { id: "retro", label: "Retro 80'ler", blurb: "VHS, neon, nostalji", style: "Sinematik", genre: "action", look: "1980s",
+    brief: "1980'ler bant görüntüsü, neon ışıklar, doygun renkler, hafif bulanıklık. Nostaljik ve enerjik.",
+    idea: "Bir video kiralama dükkânının son gecesi: raflar arasında bir kaçış ve kovalamaca." },
+  { id: "toon", label: "3D çizgi film", blurb: "Neşeli, yumuşak", style: "3D animasyon", genre: "comedy", look: "warm",
+    brief: "Yumuşak 3D çizgi film, yuvarlak şekiller, parlak ve neşeli renkler, abartılı ifadeler.",
+    idea: "Tembel bir ayı, kış uykusundan önce kileri doldurmak için bir sincapla yarışır." },
+  { id: "storybook", label: "Masal kitabı", blurb: "Elle çizilmiş, sıcak", style: "İllüstrasyon", genre: "drama", look: "warm",
+    brief: "Elle çizilmiş masal kitabı resmi, yumuşak suluboya dokusu, sıcak ışık, sade fon.",
+    idea: "Bir ağaç evde yaşayan küçük bir kız, rüzgârın getirdiği mektubu sahibine ulaştırmaya çıkar." },
+  { id: "promo", label: "Tanıtım filmi", blurb: "Temiz, parlak, hızlı", style: "Sinematik", genre: "general", look: "warm",
+    brief: "Temiz ve parlak ürün/marka görüntüsü, kısa ve hızlı çekimler, güçlü ışık, sade arka plan.",
+    idea: "Küçük bir kahve atölyesinin bir sabahı: çekirdekten fincana, 20 saniyelik bir tanıtım." },
+];
+
+export const presetOf = (id: string) => PRESETS.find((preset) => preset.id === id) ?? null;

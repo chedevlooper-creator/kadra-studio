@@ -217,7 +217,8 @@ export default function NewProjectDialog({ open, onClose, onCreated }: NewProjec
   return (
     <dialog
       ref={dialogRef}
-      className="new-project-dialog dialog-card"
+      {...({ closedby: "any" } as Record<string, string>)}
+      className="sheet sheet-wide new-project"
       aria-labelledby={headingId}
       aria-describedby={descriptionId}
       onCancel={(event) => {
@@ -230,44 +231,43 @@ export default function NewProjectDialog({ open, onClose, onCreated }: NewProjec
         if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) close();
       }}
     >
-      <div className="dialog-heading">
+      <div className="sheet-head">
         <div>
-          <span className="eyebrow"><Film size={14} aria-hidden="true" /> YENİ BİR HİKÂYE</span>
-          <h2 id={headingId}>Fikrini kadraja taşı.</h2>
-          <p id={descriptionId}>Senaryonu ekle, ilk sahne planını birlikte kuralım.</p>
+          <h2 id={headingId}>Yeni film</h2>
+          <p id={descriptionId} className="quiet">Hikâyeni yaz ya da hazır bir storyboard dosyası getir.</p>
         </div>
-        <button type="button" className="icon-btn" onClick={close} disabled={busy} aria-label="Pencereyi kapat">
+        <button type="button" className="icon-button" onClick={close} disabled={busy} aria-label="Pencereyi kapat">
           <X size={20} aria-hidden="true" />
         </button>
       </div>
 
-      <button type="button" className="flow-template-launch" disabled={busy || phase === "uncertain" || phase === "created"} onClick={() => void createFlowTemplate()}><Film size={21} /><span><strong>Balonlar ve Dağlar · Flow şablonu</strong><small>31 çekim · 9 karakter · 177 saniye · Üretim başlatmaz</small></span><ArrowRight size={16} /></button>
+      <button type="button" className="template-launch" disabled={busy || phase === "uncertain" || phase === "created"} onClick={() => void createFlowTemplate()}><Film size={20} /><span><strong>Balonlar ve Dağlar şablonu</strong><small>31 sahne, 9 oyuncu, 177 saniye. Ücretli bir şey başlatmaz.</small></span></button>
       <form onSubmit={submit} aria-busy={busy}>
         <fieldset className="new-project-fields" disabled={busy || phase === "created" || phase === "uncertain"}>
           <div className="field">
-            <label className="form-label" htmlFor={titleId}>Proje adı <span aria-hidden="true">*</span></label>
-            <input id={titleId} name="title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Bir sonraki büyük hikâyen" required maxLength={100} autoFocus autoComplete="off" />
+            <label className="form-label" htmlFor={titleId}>Film adı</label>
+            <input id={titleId} name="title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Örn. Deniz Feneri" required maxLength={100} autoFocus autoComplete="off" />
           </div>
 
           <div className="field">
             <div className="form-label-row">
-              <label className="form-label" htmlFor={scriptId}>Senaryo</label>
+              <label className="form-label" htmlFor={scriptId}>Hikâye</label>
               <span className="form-label-actions">
-                <button type="button" className="text-btn" onClick={() => importRef.current?.click()}><FileUp size={13} aria-hidden="true" /> Storyboard JSON içe aktar</button>
-                <button type="button" className="text-btn" onClick={() => setScript(SAMPLE_SCRIPT)}><Sparkles size={13} aria-hidden="true" /> Örnek ekle</button>
+                <button type="button" className="text-button" onClick={() => importRef.current?.click()}><FileUp size={13} aria-hidden="true" /> Storyboard dosyası (JSON)</button>
+                <button type="button" className="text-button" onClick={() => setScript(SAMPLE_SCRIPT)}><Sparkles size={13} aria-hidden="true" /> Örnek ekle</button>
               </span>
               <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void importStoryboard(file); }} />
             </div>
             <textarea id={scriptId} name="script" className="script-input" value={script} onChange={(event) => setScript(event.target.value)} maxLength={30000} rows={6} placeholder="Hikâyen nerede başlıyor? Karakterlerini, atmosferi ve önemli anları anlat…" aria-describedby={scriptNoteId} />
             <div className="form-label-row">
-              <span className="form-note" id={scriptNoteId}>Daha sonra da ekleyebilirsin. Plan için en az 10 karakter.</span>
+              <span className="form-note" id={scriptNoteId}>Sonra da yazabilirsin.</span>
               <span className="form-note">{script.length.toLocaleString("tr-TR")} / 30.000</span>
             </div>
           </div>
 
           <div className="form-grid">
             <div className="field">
-              <label className="form-label" htmlFor={styleId}>Görsel dünya</label>
+              <label className="form-label" htmlFor={styleId}>Görsel stil</label>
               <select id={styleId} name="style" value={style} onChange={(event) => setStyle(event.target.value)}>
                 <option>Sinematik</option>
                 <option>Anime</option>
@@ -277,7 +277,7 @@ export default function NewProjectDialog({ open, onClose, onCreated }: NewProjec
               </select>
             </div>
             <div className="field">
-              <label className="form-label" htmlFor={budgetId}>Bütçe <span className="form-note">(isteğe bağlı)</span></label>
+              <label className="form-label" htmlFor={budgetId}>Bütçe tavanı <span className="form-note">isteğe bağlı</span></label>
               <div className="budget-input"><input id={budgetId} name="budget" type="number" inputMode="decimal" min={0} max={100000} step="0.01" value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="Sınır belirle" /><span>USD</span></div>
             </div>
           </div>
@@ -296,19 +296,18 @@ export default function NewProjectDialog({ open, onClose, onCreated }: NewProjec
           </fieldset>
         </fieldset>
 
-        <p className="form-note new-project-disclosure"><Sparkles size={14} aria-hidden="true" /> NVIDIA anahtarı tanımlıysa senaryon Nemotron ile ücretsiz olarak sahnelere ayrılır (yaklaşık 20 sn); değilse yerel kurallar kullanılır. Ücretli istek gönderilmez.</p>
+        <p className="form-note"><Sparkles size={14} aria-hidden="true" /> Hikâyen yaklaşık 20 saniyede sahnelere bölünür. Ücretli hiçbir şey onayın olmadan başlamaz.</p>
 
         {error ? <div className={phase === "created" ? "form-notice" : "form-error"} role={phase === "created" ? "status" : "alert"}>{phase === "created" ? <><strong><Check size={15} aria-hidden="true" /> Projen oluşturuldu.</strong><br /></> : null}{error}</div> : null}
 
-        <div className="dialog-actions">
-          <button type="button" className="btn btn-secondary" onClick={close} disabled={busy}>{phase === "uncertain" ? "Kapat ve kontrol et" : "Vazgeç"}</button>
+        <div className="sheet-actions">
+          <button type="button" className="button" onClick={close} disabled={busy}>{phase === "uncertain" ? "Kapat ve kontrol et" : "Vazgeç"}</button>
           {phase === "created" && createdProject ? (
-            <button type="button" className="btn btn-primary" onClick={() => finish(createdProject)}>Projeyi aç <ArrowRight size={16} aria-hidden="true" /></button>
+            <button type="button" className="button button-lamp" onClick={() => finish(createdProject)}>Projeyi aç <ArrowRight size={16} aria-hidden="true" /></button>
           ) : phase !== "uncertain" ? (
-            <button type="submit" className="btn btn-primary" disabled={busy}>
+            <button type="submit" className="button button-lamp" disabled={busy}>
               {busy ? <LoaderCircle className="spin" size={16} aria-hidden="true" /> : <Sparkles size={16} aria-hidden="true" />}
-              {phase === "creating" ? "Proje oluşturuluyor…" : phase === "planning" ? "Sahneler planlanıyor… (~20 sn)" : "Projeyi oluştur"}
-              {!busy ? <ArrowRight size={16} aria-hidden="true" /> : null}
+              {phase === "creating" ? "Kaydediliyor…" : phase === "planning" ? "Sahnelere bölünüyor…" : "Filme başla"}
             </button>
           ) : null}
         </div>

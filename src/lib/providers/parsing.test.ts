@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseCharacterResearch } from "./deepseek";
+import { parseCharacterResearch, parseEnhancedCharacter, parseEnhancedRepair, parseEnhancedShots } from "./deepseek";
 import { outcomeUrl } from "./gmi";
 import { parseSheetVerdict } from "./nvidia";
 import { expandQueryVariants, parseCommons } from "./wikimedia";
@@ -62,4 +62,25 @@ test("DeepSeek character research parser normalizes traits, aliases and Commons 
   assert.deepEqual(parsed.commonsQueries, ["Lighthouse keeper portrait", "Old sailor beard", "Fotoğrafçı"]);
   const fallback = parseCharacterResearch("geçersiz yanıt", "Gezgin");
   assert.deepEqual(fallback.commonsQueries, ["Gezgin"]);
+});
+
+test("DeepSeek prompt enhancement parsers normalize shot, character and repair outputs", () => {
+  const shots = parseEnhancedShots(
+    '```json\n{"shots":[{"id":"s1","image_prompt":"Cinematic 35mm wide shot at dawn","motion_prompt":"Slow dolly in through morning mist"}]}\n```',
+    ["s1"],
+  );
+  assert.deepEqual(shots, [{ id: "s1", imagePrompt: "Cinematic 35mm wide shot at dawn", motionPrompt: "Slow dolly in through morning mist" }]);
+
+  const character = parseEnhancedCharacter(
+    '{"appearance":"elderly mountaineer with silver beard, weathered wool coat","style":"Cinematic realistic concept art"}',
+    { appearance: "yaşlı dağcı", style: "Sinematik" },
+  );
+  assert.equal(character.appearance, "elderly mountaineer with silver beard, weathered wool coat");
+  assert.equal(character.style, "Cinematic realistic concept art");
+
+  const repair = parseEnhancedRepair(
+    '{"instruction":"Redraw the left hand with five natural fingers matching the warm lighting"}',
+    "sol eli 5 parmak yap",
+  );
+  assert.equal(repair, "Redraw the left hand with five natural fingers matching the warm lighting");
 });
