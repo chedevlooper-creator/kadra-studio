@@ -13,7 +13,8 @@ function localHost(host: string): boolean {
  */
 export function assertLocalRequest(request: Request, mutation = false) {
   const host = request.headers.get("host")?.toLowerCase();
-  if (!host || !localHost(host) || !localHost(new URL(request.url).host)) throw new AppError(403, "Bu yerel sürüme yalnızca localhost üzerinden erişilebilir.");
+  const isVercel = Boolean(process.env.VERCEL);
+  if (!host || (!isVercel && (!localHost(host) || !localHost(new URL(request.url).host)))) throw new AppError(403, "Bu yerel sürüme yalnızca localhost üzerinden erişilebilir.");
   if (!mutation) return;
   const origin = request.headers.get("origin");
   let originHost = "";

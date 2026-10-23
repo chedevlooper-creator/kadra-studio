@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import { createProjectRepository } from "./projects";
 import { completeWithDeepSeek, deepseekConfigured, enhanceShotsWithDeepSeek, planWithDeepSeek, type PromptEnhanceRequest } from "./providers/deepseek";
@@ -41,5 +42,6 @@ function paymentsDisabled(): boolean {
 }
 
 /** The application's single local store; tests build their own repositories instead. */
-export const repository = createProjectRepository(process.env.KADRA_DATA_DIR || path.join(process.cwd(), ".data"), { providers: providerStatus, aiPlanner, assistant, promptEnhancer, videoPrices: loadVideoPrices, referenceImagePrice: loadReferenceImagePrice, repairPrice: loadRepairPrice, framePrices: loadFramePrices, voicePrice: loadVoicePrice, spendLimit, paymentsDisabled, paidOnly: true });
+const defaultDataDir = process.env.KADRA_DATA_DIR || (process.env.VERCEL ? path.join(os.tmpdir(), "kadra-data") : path.join(process.cwd(), ".data"));
+export const repository = createProjectRepository(defaultDataDir, { providers: providerStatus, aiPlanner, assistant, promptEnhancer, videoPrices: loadVideoPrices, referenceImagePrice: loadReferenceImagePrice, repairPrice: loadRepairPrice, framePrices: loadFramePrices, voicePrice: loadVoicePrice, spendLimit, paymentsDisabled, paidOnly: true });
 export const publicDirectory = path.join(process.cwd(), "public");
