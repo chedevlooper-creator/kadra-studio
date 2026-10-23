@@ -234,6 +234,7 @@ export function createProductionWorker(options: WorkerOptions) {
       };
     }
 
+    if (paidOnly) throw new AppError(503, "Ücretsiz kare üretimi kapalı; kare bu teklifte yer almıyor.");
     if (!engine) return { kind: "image", url: scene.image, source: scene.imageSource, review: null, note: "NVIDIA anahtarı tanımlı olmadığı için mevcut görsel kullanıldı." };
     const prompt = imagePrompt(project, scene);
     let image = await engine.generate({ prompt, aspectRatio: project.aspectRatio, seed: seedFor(`${scene.id}:${runId}`, step.attempts) });
@@ -361,6 +362,7 @@ export function createProductionWorker(options: WorkerOptions) {
       let image: Buffer;
       let cost = 0;
       const usePaid = Boolean(reference || step.paid);
+      if (paidOnly && !usePaid) throw new AppError(503, "Ücretsiz karakter sayfası üretimi kapalı; bu karakter için GMI teklifi gerekli.");
       let engineLabel: SheetAttempt["engine"] = usePaid ? "nano-banana" : "flux";
       if (usePaid) {
         const engine = options.videoEngine?.() ?? null;
@@ -533,6 +535,7 @@ export function createProductionWorker(options: WorkerOptions) {
     if (step.kind === "clip") {
       const clip = await sceneClip(project, scene!);
       if (clip.source === "ai") return { kind: "clip", note: `Bu kareden daha önce üretilmiş yapay zekâ videosu (${clip.label}) kullanıldı; yeniden ücret ödenmedi.` };
+      if (paidOnly) throw new AppError(409, `${scene!.title}: ücretli video bulunamadı; çekim için yeni teklif gerekli.`);
       const rendered = await cameraClip(project, scene!, clip.file);
       return { kind: "clip", note: rendered ? `Kamera: ${cameraMove(scene!.camera).label.toLocaleLowerCase("tr")}.` : "Kare ve kamera hareketi değişmediği için önceki klip kullanıldı." };
     }

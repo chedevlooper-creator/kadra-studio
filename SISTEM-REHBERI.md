@@ -3,6 +3,8 @@
 > Senaryodan indirilebilir MP4 filme: sistem uçtan uca nasıl çalışır?
 >
 > Bu belge 22 Ekim 2026 tarihli kaynak koddan (`src/`) okunarak hazırlandı. Tasarım hedefleri için [docs/teknik-mimari.md](docs/teknik-mimari.md) ve [docs/gelistirme-plani.md](docs/gelistirme-plani.md) dosyalarına bakın. Bu belge ise **şu an kodda ne olduğunu** anlatır.
+>
+> **Sürüm notu (23 Ekim 2026):** Ücretsiz görsel üretimi (FLUX.2 Klein) ve FFmpeg kamera hareketi kaldırıldı. Yeni üretimde her kare ve her video GMI Cloud'un ücretli modelleriyle üretilir; FFmpeg yalnızca yazı kartı, ses/müzik miksajı ve montaj için kullanılır. Aşağıda "ücretsiz akış" diye geçen bölümler yalnızca eski projeler ve testler için geçerlidir.
 
 ---
 
@@ -233,27 +235,15 @@ sequenceDiagram
 
 ---
 
-## 8. Aşama 5 — Hareket: ücretsiz kamera ya da ücretli yapay zekâ videosu
+## 8. Aşama 5 — Hareket: yalnızca ücretli GMI videosu
 
-### 8.1 Ücretsiz: FFmpeg kamera hareketi (`clip`)
+### 8.1 FFmpeg kamera hareketi (kaldırıldı)
 
-[production/ffmpeg.ts](src/lib/production/ffmpeg.ts) içindeki `cameraMotion()`, çekimin **kamera** alanındaki metni okuyup bir harekete çevirir:
+Eski sürümde kare, `zoompan` filtresiyle Ken Burns hareketine sokuluyordu. **Bu yol kaldırıldı:** ücretsiz kamera hareketi üretilmez, `renderImageClip()` yalnızca eski/ücretsiz test akışlarında sabit bir klip üretir. Kamera metni hâlâ `cameraMotion()` ile modele sözlü olarak iletilir; asıl hareketi GMI video modeli üretir.
 
-| Kamera metninde geçen | Hareket |
-| :--- | :--- |
-| uzaklaş, geri çekil, zoom out, pull back, dolly out | Uzaklaşma (1,15 → 1,0 zoom) |
-| sağa, pan right | Sağa kaydırma |
-| sola, pan left | Sola kaydırma |
-| yukarı, yüksel, tilt up, crane up, rise | Yukarı kaydırma |
-| aşağı, alçal, tilt down | Aşağı kaydırma |
-| sabit, static, still, durağan | Neredeyse sabit (çok hafif yaklaşma) |
-| (hiçbiri) | Yavaş yaklaşma (1,0 → 1,15 zoom) |
+### 8.2 Her çekim: GMI image-to-video (`video`)
 
-Kare `zoompan` filtresiyle hareketlendirilir; başına ve sonuna yumuşak geçiş (fade) eklenir. Çıktı H.264 (`libx264`, `crf 20`) olarak kodlanır.
-
-### 8.2 Ücretli: GMI image-to-video (`video`)
-
-Kullanıcı bir çekimin hareket türünü `ai` yaparsa o çekim gerçek yapay zekâ videosuna çevrilir. Akış:
+Ücretli akışta her video çekimi gerçek yapay zekâ videosuna çevrilir. Akış:
 
 1. **Kare yüklenir:** `engine.upload()` kareyi GMI'a yükler ve bir URL alır.
 2. **Gönderim işaretlenir:** `markSubmitting()` adımı "gönderiliyor" olarak kaydeder. Bu kayıt yapılamazsa (ör. kullanıcı çalışmayı durdurduysa) istek gönderilmez.

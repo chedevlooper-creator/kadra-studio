@@ -537,3 +537,47 @@ test("referenceFrames quotes and reserves Nano Banana 2.1 for shots with approve
   assert.equal(started.ledger[0].kind, "image");
   assert.equal(started.ledger[0].status, "reserved");
 });
+
+const paidOnlyOptions: RepositoryOptions = {
+  ...paidOptions,
+  paidOnly: true,
+  framePrices: async () => new Map([["gemini-nano-banana-2.1", 0.041]]),
+};
+
+test("paid-only refuses a free run and quotes every frame and video", async (t) => {
+  const { repository } = await fixture(t, paidOnlyOptions);
+  const planned = await plannedProject(repository);
+  await assert.rejects(repository.startRun(planned.id, planned.revision, "paidonly-free-01"), /Ücretsiz üretim kaldırıldı/);
+
+  const quoted = await repository.prepareQuote(planned.id, { revision: planned.revision, quality: "economy", budget: 2, selections: [] });
+  assert.equal(quoted.scenes.find((scene) => scene.kind === "video")?.motion, "ai");
+  assert.deepEqual(quoted.quote!.lines.map((line) => line.kind ?? "video").sort(), ["image", "video"]);
+  assert.ok(quoted.quote!.withinBudget);
+
+  const started = await repository.startRun(quoted.id, quoted.revision, "paidonly-run-01", quoted.quote!.id);
+  assert.deepEqual(started.run?.steps.map((step) => step.kind), ["image", "video", "title", "montage"]);
+  assert.equal(started.ledger.filter((entry) => entry.status === "reserved").length, 2, "the frame and the video are reserved");
+});
+
+test("paid-only prices every character sheet through GMI", async (t) => {
+  const { repository } = await fixture(t, { ...paidOnlyOptions, referenceImagePrice: async () => 0.041 });
+  const planned = await plannedProject(repository);
+  const budgeted = await repository.updateProject(planned.id, { revision: planned.revision, budget: 1 });
+  await repository.addCharacter(planned.id, budgeted.revision, { name: "Yolcu", appearance: "mavi pelerin", aliases: [], style: "" });
+  const estimate = await repository.estimateCharacterRun(planned.id, ["c1"]);
+  assert.equal(estimate.lines[0].engine, "nano-banana");
+  assert.equal(estimate.lines[0].unitCost, 0.041);
+});
+
+test("paid-only imports a storyboard with every video shot set to AI motion", async (t) => {
+  const { repository } = await fixture(t, paidOnlyOptions);
+  const imported = await repository.importStoryboard({
+    title: "Paid şablon", style: "Sinematik", aspectRatio: "16:9", budget: null,
+    shots: [
+      { id: "1A", sceneId: "SAHNE 1", durationSec: 5, visualSummary: "Karlı yol.", aiPrompt: "Snowy road." },
+      { id: "F1", sceneId: "FİNAL", durationSec: 3, visualSummary: "Siyah ekran.", aiPrompt: "Pure black screen.", voiceoverOrText: "«Son.»" },
+    ],
+  });
+  assert.equal(imported.scenes[0].model, "GMI video · yapay zekâ");
+  assert.ok(imported.scenes.filter((scene) => scene.kind === "video").every((scene) => scene.motion === "ai"));
+});

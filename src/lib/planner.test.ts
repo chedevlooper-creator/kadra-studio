@@ -25,13 +25,13 @@ test("preamble and blank label content remain in the plan", () => {
   assert.equal(segments[2].content, "Final");
 });
 
-test("heuristic planner marks reference images and picks the free production method", () => {
+test("heuristic planner marks reference images and picks the paid production method", () => {
   const scenes = planScenes("Sahne 1: Yolcu patikada ilerler.\nFinal: Yazı kartı: Yol devam eder.", "Sinematik", "/images/mountains.jpg");
   assert.equal(scenes[0].kind, "video");
   assert.equal(scenes[1].kind, "title");
   assert.equal(scenes[0].image, "/images/mountains.jpg");
   assert.ok(scenes.every((scene) => scene.status === "draft" && scene.imageSource === "reference" && scene.notes.some((note) => note.includes("dil modeli kullanılmadı"))));
-  assert.equal(scenes[0].model, "FLUX.2 Klein");
+  assert.equal(scenes[0].model, "GMI video · yapay zekâ");
   assert.equal(scenes[1].model, "Yazı kartı");
   assert.match(scenes[1].modelReason, /eksiksiz/);
 });

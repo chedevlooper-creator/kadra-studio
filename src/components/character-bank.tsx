@@ -43,7 +43,7 @@ export default function CharacterBank({ project, providers, disabled, onProjectC
   const [sourceFilter, setSourceFilter] = useState<"all" | "wikimedia" | "openverse">("all");
   const [research, setResearch] = useState<CharacterResearchView | null>(null);
   const [estimate, setEstimate] = useState<CharacterEstimate | null>(null);
-  const [engine, setEngine] = useState<"auto" | "nano-banana">(() => providers.gmi && !providers.nvidia ? "nano-banana" : "auto");
+  const engine = "nano-banana" as const;
   const [budget, setBudget] = useState<string>(() => project.budget !== null ? String(project.budget) : "25");
   const [viewing, setViewing] = useState<Record<string, string>>({});
   const [repairTarget, setRepairTarget] = useState<RepairTarget | null>(null);
@@ -130,15 +130,9 @@ export default function CharacterBank({ project, providers, disabled, onProjectC
 
   return <section className="char-bank" aria-labelledby="char-bank-title">
     <div className="char-bank-head">
-      <div><span className="studio-eyebrow">ÖNCE KARAKTERLER VE MEKÂNLAR</span><h3 id="char-bank-title"><Users size={15} /> Karakter ve mekân bankası <span>{characters.length}</span></h3><p>Her karakter için bir referans sayfası, her mekân için geniş bir mekân görseli üretilir; onaylananlar referanslı karelerde modele verilir ve aynı mekândaki çekimler birbirini takip eder. Model olarak ücretsiz FLUX.2 Klein veya ücretli GMI Nano Banana 2.1 seçebilirsin. Hakem her denemeyi puanlar; ücretli sayfada hatanın yerini gösterirse sayfa baştan üretilmez, yalnızca o bölge onarılır. Son onay senin.</p></div>
+      <div><span className="studio-eyebrow">ÖNCE KARAKTERLER VE MEKÂNLAR</span><h3 id="char-bank-title"><Users size={15} /> Karakter ve mekân bankası <span>{characters.length}</span></h3><p>Her karakter için bir referans sayfası, her mekân için geniş bir mekân görseli üretilir; onaylananlar referanslı karelerde modele verilir ve aynı mekândaki çekimler birbirini takip eder. Tüm sayfalar ücretli GMI Nano Banana 2.1 ile üretilir. Hakem her denemeyi puanlar; ücretli sayfada hatanın yerini gösterirse sayfa baştan üretilmez, yalnızca o bölge onarılır. Son onay senin.</p></div>
       <div className="char-bank-actions">
-        <label className="paid-select" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-          <span>Model</span>
-          <select value={engine} disabled={locked} onChange={(event) => setEngine(event.target.value as "auto" | "nano-banana")} aria-label="Karakter sayfası üretim modeli">
-            <option value="auto">Otomatik (fotoğraflı: GMI · fotoğrafsız: FLUX ücretsiz)</option>
-            <option value="nano-banana" disabled={!providers.gmi}>Nano Banana 2.1 · GMI ücretli (tümü)</option>
-          </select>
-        </label>
+        <span className="char-hint" style={{ alignSelf: "center" }}>Nano Banana 2.1 · GMI ücretli</span>
         <button type="button" className="studio-button studio-button-secondary" disabled={locked} onClick={() => setDraft({ id: null, kind: "person", name: "", appearance: "", aliases: "", style: "" })}><Plus size={14} /> Karakter ekle</button>
         <button type="button" className="studio-button studio-button-secondary" disabled={locked} onClick={() => setDraft({ id: null, kind: "place", name: "", appearance: "", aliases: "", style: "" })}><MapPin size={14} /> Mekân ekle</button>
         <button type="button" className="studio-button studio-button-primary" disabled={locked || !selected.length} onClick={() => priceRun()}>{busy === "estimate" ? <LoaderCircle size={14} className="studio-spin" /> : <Sparkles size={14} />} Seçilenleri üret ({selected.length})</button>
@@ -172,7 +166,7 @@ export default function CharacterBank({ project, providers, disabled, onProjectC
             </> : <>
               <button type="button" className="char-link" disabled={locked} onClick={() => openSearch(character)}><Search size={12} /> Fotoğraf bul</button>
               <button type="button" className="char-link" disabled={locked} onClick={() => { uploadFor.current = character.id; uploadInput.current?.click(); }}><Upload size={12} /> Fotoğraf yükle</button>
-              <span className="char-hint">{engine === "nano-banana" ? "Fotoğrafsız: Nano Banana 2.1 (GMI ücretli)" : "Fotoğrafsız: tariften ücretsiz"}</span>
+              <span className="char-hint">Fotoğrafsız: Nano Banana 2.1 (GMI ücretli)</span>
             </>}
           </div>
           {attempts.length > 1 ? <div className="char-attempts" aria-label="Denemeler">{attempts.slice(-6).map((attempt) => <button key={attempt.id} type="button" className={attempt.id === shown?.id ? "is-shown" : ""} onClick={() => setViewing({ ...viewing, [character.id]: attempt.id })} title={attempt.verdict ? `${attempt.verdict.ok ? "Hakem onayladı" : "Hakem reddetti"} · ${attempt.verdict.note}` : "Hakem puanı yok"}><img src={attempt.url} alt="" />{attempt.verdict ? <span className={attempt.verdict.ok ? "is-ok" : ""}>{attempt.verdict.ok ? "✓" : "✗"}</span> : null}{attempt.engine === "repair" ? <em className="char-attempt-fix" aria-label="Onarılmış deneme">onarım</em> : null}</button>)}</div> : null}
@@ -227,7 +221,7 @@ export default function CharacterBank({ project, providers, disabled, onProjectC
         <div className="char-estimate">
           {estimate.lines.map((line) => {
             const hasRef = Boolean(characters.find((character) => character.id === line.characterId)?.reference);
-            return <div key={line.characterId}><strong>{line.name}</strong><span>{line.engine === "flux" ? "FLUX.2 Klein · tariften · ücretsiz" : `Nano Banana 2.1 · ${hasRef ? "fotoğraftan" : "tariften"} · ${line.maxAttempts} × ${usd(line.unitCost)}`}</span><em>{line.maxCost ? `en fazla ${usd(line.maxCost)}` : "0 $"}</em></div>;
+            return <div key={line.characterId}><strong>{line.name}</strong><span>{`Nano Banana 2.1 · ${hasRef ? "fotoğraftan" : "tariften"} · ${line.maxAttempts} × ${usd(line.unitCost)}`}</span><em>{line.maxCost ? `en fazla ${usd(line.maxCost)}` : "0 $"}</em></div>;
           })}
           {estimate.total > 0 ? <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
             <label className="paid-field" style={{ flex: 1, minWidth: 180 }}>

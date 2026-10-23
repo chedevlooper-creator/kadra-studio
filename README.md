@@ -4,35 +4,34 @@ Hazırlanma tarihi: 22 Ekim 2026.
 
 Ürün hedefi: Kullanıcı senaryosunu ve üretim tercihlerini verir; uygulama sahneleri planlar, bağlı yapay zekâ servisleri arasından uygun modelleri seçer, görsel ve video parçalarını üretir, ses ve metinleri yerleştirir, indirilebilir bir final video hazırlar.
 
-Bu klasör tasarım belgelerini ve uygulamanın yerel sürümünü (Kadra Studio) içerir. Uygulama senaryodan **ücretsiz** olarak indirilebilir bir MP4 film üretir:
+Bu klasör tasarım belgelerini ve uygulamanın yerel sürümünü (Kadra Studio) içerir. Uygulama senaryodan indirilebilir bir MP4 film üretir. **Görsel ve video üretiminin tamamı GMI Cloud'un ücretli modelleriyle yapılır; ücretsiz görsel modeli veya ücretsiz kamera hareketi yoktur.** FFmpeg yalnızca yazı kartları, ses/müzik miksajı ve montaj için kullanılır.
 
 1. **Modeller Arası Köprü ve Planlama:** `DEEPSEEK_API_KEY` tanımlıysa DeepSeek V4.1 Flash (`deepseek-flash` / `deepseek-v4-pro`) ve yerleşik Web Arama API'si (`/v1/tools/search`) senaryoyu planlar, karakterleri webde araştırıp çok dilli Wikimedia Commons sorguları üretir ve görsel kalite hakemliği yapar. Tanımlı değilse veya ulaşılamazsa NVIDIA Nemotron 3 Ultra, o da yoksa yerel kural tabanlı planlayıcı devreye girer.
-2. **Karakter Bankası ve Referans Sayfaları:** Her karakter için Wikimedia Commons'tan lisanslı fotoğraf aranabilir veya bilgisayardan fotoğraf yüklenebilir. Fotoğrafsız karakterler ücretsiz **FLUX.2 Klein** ile, fotoğraflı karakterler onaylı bütçeyle **GMI Gemini Nano Banana 2.1** ile 1:1 karakter sayfasına dönüştürülür; yapay zekâ hakemi (DeepSeek VL / Nemotron VL) stil, özellik, poz ve temizlik puanlarını (`1–5`) değerlendirir.
-3. **Kareler ve Referanslı Çekimler:** Ücretsiz akışta her video çekimi için NVIDIA FLUX.2 Klein başlangıç karesi üretir. İsteğe bağlı ücretli modda onaylı karakter sayfaları **Nano Banana 2.1**'e referans görsel olarak verilerek sahne kareleri üretilir.
-4. **Kontrol:** DeepSeek V4.1 Flash VL (veya Nemotron 3.5 Super VL) kareyi çekim açıklaması ve onaylı karakter sayfalarıyla karşılaştırır ve her hatanın yerini işaretler. Uymazsa bir kez ücretsiz yeniden ürettirir ve iki denemeden daha az sorunlu olanı tutar.
-5. **Film ve Müzik:** FFmpeg her kareye kamera hareketi verir, yazı kartlarını metin olarak çizer, zaman çizelgesine yüklenen müzik parçasını (`MusicLane`) ses seviyesi ve başlangıç saniyesiyle miksler ve tüm çekimleri tek MP4'te birleştirir. Hazır storyboard JSON dosyaları doğrudan içe aktarılabilir.
+2. **Karakter Bankası ve Referans Sayfaları:** Her karakter ve mekân için **her zaman GMI Gemini Nano Banana 2.1** ile referans sayfası üretilir. Wikimedia Commons'tan lisanslı fotoğraf aranabilir veya bilgisayardan fotoğraf yüklenebilir; fotoğraf varsa model onu referans alır, yoksa tariften çizer. Yapay zekâ hakemi (DeepSeek VL / Nemotron VL) stil, özellik, poz ve temizlik puanlarını (`1–5`) değerlendirir; sayfa ancak sen onaylayınca karelerde referans olur.
+3. **Kareler:** Her video çekiminin başlangıç karesi GMI görsel modeliyle üretilir. Onaylı karakter ve mekân sayfaları modele referans görsel olarak verilir; aynı mekândaki bir önceki çekim de ışık ve eşya sürekliliği için eklenir. Kare modeli kalite seviyesine uyanlar arasından canlı fiyatla en ucuzu seçilerek belirlenir: Hunyuan Image 3.5, Seedream 5.0 Lite, Nano Banana 2 Lite veya Nano Banana 2.1 (`src/lib/routing/frame-router.ts`); istersen modeli kendin de seçebilirsin.
+4. **Kontrol:** DeepSeek V4.1 Flash VL (veya Nemotron 3.5 Super VL) kareyi çekim açıklaması ve onaylı karakter sayfalarıyla karşılaştırır ve her hatanın yerini işaretler. Üretim başarısız olursa ücretsiz bir yedek model devreye girmez; adım durur ve durum akış günlüğünde görünür. Yerel hata, sayfayı baştan üretmek yerine yalnızca o bölgeyi maskeli düzenlemeyle onarır.
+5. **Video:** Her video çekimi GMI video yönlendiricisiyle gerçek videoya dönüştürülür. Yönlendirici; kalite seviyesine, çekimin süresine ve kadraj oranına uyan modeller arasından GMI'ın canlı fiyatına göre **en ucuzunu** seçer (Veo 3.1 Lite/Fast, Hailuo, Seedance, Wan, Kling). İstersen çekim bazında model sabitleyebilirsin.
+6. **Film ve Müzik:** FFmpeg yazı kartlarını metin olarak çizer, müzik parçasını (`MusicLane`) ve dış sesi miksler, tüm videoları tek MP4'te birleştirir. Hazır storyboard JSON dosyaları doğrudan içe aktarılabilir; içe aktarılan her video çekimi ücretli animasyona ayarlanır.
 
-**İsteğe bağlı ücretli yapay zekâ hareketi (GMI Cloud):** Üretim sekmesinde seçilen çekimler gerçek videoya dönüştürülebilir. Kurallar kodda sabittir ve testlerle doğrulanır:
+**Ücret kuralları:** Kurallar kodda sabittir ve testlerle doğrulanır:
 
-- Yönlendirici, seçilen kalite seviyesine (Ekonomik / Dengeli / En iyi) ve çekimin süresi ile kadraj oranına uyan modeller arasından GMI'ın canlı fiyatına göre **en ucuzunu** seçer. Fiyatlar çelişirse yüksek olan varsayılır.
-- Önce fiyat teklifi gösterilir: çekim başına model, faturalanan süre, tahmini tutar, bir sonraki seçenek ve en pahalı uygun model. Teklif 15 dakika geçerlidir; ayarlar değişirse geçersizleşir.
-- Teklif onaylanmadan ve proje bütçesine sığmadan hiçbir ücretli istek gönderilmez. Tutar başta bütçeden ayrılır; gönderilmeyen istekler iptalde iade edilir.
-- Gönderimi belirsiz kalan bir istek asla otomatik olarak yeniden gönderilmez; o çekim ücretsiz kamera hareketiyle tamamlanır ve harcama defterinde işaretlenir.
+- Üretim, **onaylanmış bir fiyat teklifi olmadan başlamaz**. Teklif; her çekimin karesini ve videosunu, kullanılan modeli, faturalanan süreyi, tahmini tutarı, bir sonraki seçeneği ve en pahalı uygun modeli gösterir. Teklif 15 dakika geçerlidir; ayarlar, bütçe veya karakter bankası değişirse geçersizleşir.
+- Teklif proje bütçesine sığmıyorsa hiçbir ücretli istek gönderilmez. Tutar başta bütçeden ayrılır; gönderilmeyen isteklerin ayrılan tutarı iade edilir. `KADRA_MAX_SPEND_USD` ile tüm projeler için toplam tavan, `KADRA_KILL_SWITCH=on` ile acil durdurma uygulanabilir.
+- Gönderimi belirsiz kalan bir istek **asla otomatik olarak yeniden gönderilmez**; üretim durur, harcama defterinde işaretlenir ve teklif yenilenerek devam edilebilir.
 - Tüm ücretli istekler projedeki harcama defterinde görünür.
 
 **Yapılmış işi tekrar yapmama ve yalnızca hatalı bölgeyi onarma:**
 
-- Her kare ve klip, neyden yapıldığının parmak iziyle saklanır (`src/lib/production/reuse.ts`). Bir kare yalnızca promptu, stili, karakterleri ya da kadrajı değiştiğinde veya hakem onu işaretlediğinde yeniden üretilir. Kamera hareketli klipler ve yazı kartları da değişmedikçe yeniden işlenmez. "Tüm kareleri yenile" bu kuralı bilerek atlar.
-- Ödenmiş yapay zekâ videoları `.data/media/<proje>/clips/` altında, kare ve hareket parmak iziyle saklanır. Aynı kare ve hareket için yeni teklif bu çekimi ücretlendirmez, "yeniden kullanılır" diye gösterir. Ücretsiz film de bu videoları kullanır. Daha yüksek bir kalite seviyesi veya sabitlenmiş başka bir model istenirse yeni üretim yapılır.
-- Hakemler (Nemotron VL / DeepSeek) her hatanın yerini kutu olarak bildirir. Ücretli karakter sayfasında hata yerelse, sayfa baştan üretilmez; yalnızca o bölge **GPT Image 2.5 Edit** maskeli düzenlemesiyle yeniden çizilir. Bunun maliyeti, zaten ayrılmış deneme bütçesinin içinde kalır.
+- Her kare ve video, neyden yapıldığının parmak iziyle saklanır (`src/lib/production/reuse.ts`). Bir kare yalnızca promptu, stili, karakterleri ya da kadrajı değiştiğinde veya hakem onu işaretlediğinde yeniden üretilir. Değişmeyen kareler ve ödenmiş videolar yeniden ücretlendirilmez.
+- Ödenmiş yapay zekâ videoları `.data/media/<proje>/clips/` altında, kare ve hareket parmak iziyle saklanır. Aynı kare ve hareket için yeni teklif bu çekimi ücretlendirmez, "yeniden kullanılır" diye gösterir. Daha yüksek bir kalite seviyesi veya sabitlenmiş başka bir model istenirse yeni teklif verilir.
+- Hakemler (Nemotron VL / DeepSeek) her hatanın yerini kutu olarak bildirir. Karakter sayfasında hata yerelse, sayfa baştan üretilmez; yalnızca o bölge **GPT Image 2.5 Edit** maskeli düzenlemesiyle yeniden çizilir. Bunun maliyeti, zaten ayrılmış deneme bütçesinin içinde kalır.
 - Storyboard ve karakter bankasındaki "Bölgeyi onar" düğmesiyle istediğin alanı çizip düzeltme isteyebilirsin. Önce canlı fiyat gösterilir (yaklaşık 0,02–0,03 $). Model yalnızca maskenin içini değiştirir; Kadra sonucu yumuşak kenarla orijinale geri yapıştırır, böylece alanın dışındaki her piksel birebir korunur. Onarım tek tıkla geri alınabilir.
 
 **Tutarlılık, yönetmenlik ve ses:**
 
 - **Mekân bankası:** Karakterlerle aynı bankada mekânlar da tutulur. Her mekân için film oranında, insansız bir mekân görseli üretilir ve hakem bunu mekân ölçütleriyle değerlendirir. Yapay zekâ planlayıcısı senaryodan mekânları da çıkarır ve her çekimi mekânına bağlar.
-- **Referanslı kareler:** Onaylı karakter ve mekân görselleri kareye referans verilir. Aynı mekândaki bir önceki çekimin karesi de ışık ve eşyalar sürsün diye eklenir. Kare modeli, kalite seviyesine uyanlar arasından canlı fiyatla en ucuzu seçilerek belirlenir: Hunyuan Image 3.5, Seedream 5.0 Lite, Nano Banana 2 Lite veya Nano Banana 2.1 (`src/lib/routing/frame-router.ts`). İstersen modeli kendin de seçebilirsin.
-- **Kamera ve görünüm:** Kamera hareketi kütüphanesine hızlı yaklaşma ve el kamerası eklendi; hareketler ücretsiz FFmpeg'e ve video modellerine (Hailuo'nun kendi kamera komutları dahil) aynı sözlükle iletilir (`src/lib/cinema.ts`). Tür (Aksiyon, Epik, Dram, Komedi, Korku, Belgesel) planı ve promptları yönlendirir. Renk ve dönem görünümü (Kara film, 1960'lar, 1980'ler VHS…) montajda ücretsiz uygulanır; bunun için hiçbir kare yeniden üretilmez.
-- **Dış ses:** Çekimlerin seslendirme metinleri ya ücretsiz Mac sesiyle (Yelda) ya da teklifle alınan MiniMax Türkçe sesleriyle (1000 karakter 0,06 $) okunur. Her ses çekiminin başına yerleştirilir ve konuşma sırasında müzik otomatik kısılır. Her metin bir kez seslendirilir; ücretli ses onaylanana kadar filmde taslak Mac sesi kullanılır.
+- **Kamera ve görünüm:** Kamera sözlüğü (yavaş yaklaşma, hızlı yaklaşma, el kamerası, kaydırma…) video modelinin kendi komutlarına çevrilir (`src/lib/cinema.ts`); FFmpeg kamera hareketi üretmez. Tür (Aksiyon, Epik, Dram, Komedi, Korku, Belgesel) planı ve promptları yönlendirir. Renk ve dönem görünümü (Kara film, 1960'lar, 1980'ler VHS…) montajda ücretsiz uygulanır; bunun için hiçbir kare yeniden üretilmez.
+- **Dış ses:** Çekimlerin seslendirme metinleri ya ücretsiz Mac sesiyle (Yelda) ya da teklifle alınan MiniMax Türkçe sesleriyle (1000 karakter 0,06 $) okunur. Her ses çekiminin başına yerleştirilir ve konuşma sırasında müzik otomatik kısılır. Her metin bir kez seslendirilir; ücretli ses onaylanana kadar filmde taslak Mac sesi kullanılabilir.
 
 ## Yerelde çalıştırma
 
@@ -44,11 +43,13 @@ cp .env.example .env.local
 npm run dev
 ```
 
-`.env.local` içine [build.nvidia.com](https://build.nvidia.com/) üzerinden alınan ücretsiz anahtarı `NVIDIA_API_KEY` olarak ekleyin. Anahtar yoksa planlama kurallarla yapılır ve kareler yerine örnek referans görseller kullanılır; film yine üretilir.
+`.env.local` içine **zorunlu** olarak GMI Cloud anahtarını `GMI_API_KEY` olarak ekleyin; görsel ve video üretimi bu anahtar olmadan başlamaz. `NVIDIA_API_KEY` ve `DEEPSEEK_API_KEY` isteğe bağlıdır: planlama, karakter araştırması ve kalite kontrolü için kullanılır; yoksa planlama kurallarla yapılır, hakem atlanır. Üretim için bir de proje bütçesi ve onaylanmış fiyat teklifi gerekir.
 
-Uygulama http://127.0.0.1:3000 adresinde açılır ve yalnızca bu bilgisayardan erişilebilir. Projeler `.data/projects.json`, üretilen kareler ve filmler `.data/media/` altında saklanır (`KADRA_DATA_DIR` ile değiştirilebilir). Üretim çalışanı web sunucusunun içinde çalışır; ayrı çalıştırmak için `KADRA_WORKER=off` ayarlayıp `npm run worker` kullanın.
+Uygulama http://127.0.0.1:3000 adresinde açılır ve yalnızca bu bilgisayardan erişilebilir. Projeler `.data/projects.json`, üretilen kareler ve filmler `.data/media/`, günlük veri yedekleri `.data/backups/` altında saklanır (`KADRA_DATA_DIR` ile değiştirilebilir). Üretim çalışanı web sunucusunun içinde çalışır; ayrı çalıştırmak için `KADRA_WORKER=off` ayarlayıp `npm run worker` kullanın.
 
-Kontroller: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`.
+Harcama güvenliği: `KADRA_MAX_SPEND_USD` tüm projeler için toplam harcama tavanını, `KADRA_KILL_SWITCH=on` ise ücretli istekleri anında durdurmayı sağlar.
+
+Kontroller: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build` veya hepsi için `npm run check`.
 
 ## Belgeler
 

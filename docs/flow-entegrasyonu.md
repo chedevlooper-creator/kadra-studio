@@ -4,10 +4,10 @@
 
 ## Kullanım
 
-1. **Yeni proje → Balonlar ve Dağlar · Flow şablonu**: 31 çekim, 9 karakter ve 177 saniyelik plan oluşturur. Üretim çağrısı yapmaz. Önceki projeleri değiştirmez.
-2. Üretim yönetmeni **Tam akışı başlat**: fotoğrafsız, onaysız karakterleri NVIDIA ile hazırlar; hakemin kabul ettiği sayfaları bu akış için otomatik onaylar; tüm kareleri hazırladıktan sonra klipleri ve montajı işler. Hakem yoksa veya sayfa kabul edilmezse film aşamasına geçmez; karakter bankasından inceleme/onay sonrası yeniden başlatılır.
-3. Fotoğraf referanslı karakterler için Karakter bankasının mevcut fiyat onayı gerekir. Onaylı karakter görsellerini fiziksel referans olarak sahne modeline göndermek ve gerçek AI videosu üretmek için GMI panelindeki referanslı kare/video teklifini onaylamak gerekir. Ücretsiz FLUX akışı karakterleri metinsel tanımlarla yönlendirir; fiziksel referans görsel desteğiyle karıştırılmaz.
-4. **Yalnız kareleri üret** montaj açmadan bir kare çalışması kaydeder. **Mevcut karelerle film** var olan üretilmiş kareleri tekrar çağırmadan klip ve MP4 üretir; henüz kare olmayan çekimlerin görselleri hazırlanır. Ücretsiz klipler FFmpeg kamera hareketidir.
+1. **Yeni proje → Balonlar ve Dağlar · Flow şablonu**: 31 çekim, 9 karakter ve 177 saniyelik plan oluşturur. Üretim çağrısı yapmaz. Önceki projeleri değiştirmez. İçe aktarılan her video çekimi ücretli animasyona (`motion: ai`) ayarlanır.
+2. **Önce karakterler:** Karakter bankasındaki tüm sayfalar GMI Nano Banana 2.1 ile üretilir (fotoğraf varsa referans alınır). Hakem her denemeyi puanlar; sayfayı sen onaylarsın. Onaylı sayfalar kare üretiminde fiziksel referans olur.
+3. **Sonra tek teklif:** Üretim sekmesindeki GMI panelinden kalite seviyesi, kare modeli ve çekim bazında video modeli seçilir; canlı fiyatla teklif alınır. Teklif onaylanınca her çekimin karesi (onaylı sayfalar ve aynı mekânın önceki karesi referans verilerek) ve videosu üretilir. Ücretsiz görsel veya FFmpeg kamera hareketi yoktur.
+4. **Tutarlılık ve yeniden kullanım:** Aynı kare ve hareketle daha önce üretilmiş video yeniden ücretlendirilmez. Hakemin yerini gösterdiği hata, kareyi baştan üretmek yerine yalnızca o bölge maskeli düzenlemeyle onarılır. Değişmeyen kareler korunur.
 5. Storyboard'da sahne grubu filtresi, arama, karakter referans durumları ve CSV indirme bulunur. JSON indirme korunur.
 6. **Müzik yönetmeni** çekimlere ait ses notlarını, beste promptunu, indirilebilir ses planını ve mevcut müzik miksajını bir araya getirir.
 7. **Seslendirme** mikrofonla yerel prova, dinleme ve indirme sunar. Prova kayıtları sekme belleğindedir; kendiliğinden proje deposuna kaydedilmez veya filme mikslenmez. Ayrılmadan önce indirilmelidir.
@@ -17,8 +17,9 @@
 - `flow-sdk` Kadra'ya eklenmedi. Flow'a ait generation/download/microphone çağrıları yerine mevcut sunucu adaptörleri, tarayıcı indirme ve MediaRecorder kullanılır.
 - Flow'un kaynak kopyası korunur. Veri ve davranışlar Kadra'nın tiplerine uyarlanır; Flow medya kimlikleri yerel dosya kimliği sayılmaz.
 - Kaynaktaki arşiv fotoğraf URL'leri doğrulanmış kimlik/fotoğraf olarak otomatik atanmaz. Kadra'nın kaynak ve lisans kaydı tutan fotoğraf arama/yükleme akışı kullanılır.
-- Kare ve tam film hedefi kalıcı run kaydındadır; eski kayıtlarda hedef varsayılan olarak film olur. Kaynak kodda kamera/başlık/ses notları korunur.
+- Eski kayıtlardaki kare/film hedefi korunur; yeni ücretli akışta tek teklif kareleri ve videoları birlikte üretir. Kaynak kodda kamera/başlık/ses notları korunur.
 - Belirsiz karakter gönderiminde `actual=null` bırakılarak gider uzlaştırılana kadar rezerv korunur.
+- Ücretsiz görsel üretimi ve FFmpeg kamera hareketi yeni akıştan kaldırıldı; testler eski yolu yalnızca geriye dönük uyumluluk için kapsar.
 
 ## Doğrulama
 

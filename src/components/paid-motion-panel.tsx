@@ -20,7 +20,7 @@ const usd = (value: number) => `${value.toLocaleString("tr-TR", { minimumFractio
 export const committedSpend = (ledger: LedgerEntry[]) => ledger.filter((entry) => entry.status !== "released").reduce((sum, entry) => sum + (entry.actual ?? entry.estimate), 0);
 
 function initialSelection(project: Project): Selection {
-  return Object.fromEntries(project.scenes.filter((scene) => scene.kind === "video").map((scene) => [scene.id, { ai: scene.motion === "ai", model: scene.videoModel }]));
+  return Object.fromEntries(project.scenes.filter((scene) => scene.kind === "video").map((scene) => [scene.id, { ai: true, model: scene.videoModel }]));
 }
 
 async function send(url: string, body: unknown, key?: string): Promise<Project> {
@@ -43,9 +43,8 @@ export default function PaidMotionPanel({ project, providers, videoModels, disab
   const [selection, setSelection] = useState<Selection>(() => initialSelection(project));
   const videoScenes = project.scenes.filter((scene) => scene.kind === "video");
   const refSceneIds = useMemo(() => new Set(videoScenes.filter((scene) => project.characters.some((character) => scene.characterIds.includes(character.id) && character.sheet.status === "approved")).map((scene) => scene.id)), [videoScenes, project.characters]);
-  const [referenceFrames, setReferenceFrames] = useState(() => Boolean(project.quote?.lines.some((line) => line.kind === "image") || project.quote?.reused.some((line) => line.kind === "image")));
+  const [referenceFrames] = useState(true);
   const [frameModel, setFrameModel] = useState(project.frameModel ?? "");
-  const [bulkVideoModel, setBulkVideoModel] = useState("");
   const [busy, setBusy] = useState<"quote" | "start" | null>(null);
   const [error, setError] = useState("");
   const [now, setNow] = useState(() => Date.now());
@@ -53,8 +52,6 @@ export default function PaidMotionPanel({ project, providers, videoModels, disab
   const parsedBudget = budget.trim() === "" ? null : Number(budget);
   const quote = project.quote;
   const expired = quote ? Date.parse(quote.expiresAt) <= now : false;
-  const chosenCount = Object.values(selection).filter((item) => item.ai).length;
-  const allChosen = videoScenes.length > 0 && chosenCount === videoScenes.length;
   const quotedRefFrames = Boolean(quote?.lines.some((line) => line.kind === "image") || quote?.reused.some((line) => line.kind === "image"));
 
   // The quote only applies to the settings it was made for; any local change asks for a new one.
@@ -69,35 +66,14 @@ export default function PaidMotionPanel({ project, providers, videoModels, disab
     return () => clearInterval(timer);
   }, [quote, expired]);
 
-  function toggleAllScenes(enable: boolean, modelOverride?: string | null) {
-    setSelection(Object.fromEntries(videoScenes.map((scene) => {
-      const current = selection[scene.id] ?? { ai: false, model: null };
-      return [scene.id, { ai: enable, model: modelOverride !== undefined ? modelOverride : current.model }];
-    })));
-  }
-
-  function applyBulkVideoModel(value: string) {
-    setBulkVideoModel(value);
-    const nextModel = value || null;
-    const hasAnySelected = Object.values(selection).some((item) => item.ai);
-    setSelection(Object.fromEntries(videoScenes.map((scene) => {
-      const current = selection[scene.id] ?? { ai: false, model: null };
-      const shouldEnable = hasAnySelected ? current.ai : true;
-      return [scene.id, { ai: shouldEnable, model: shouldEnable ? nextModel : current.model }];
-    })));
-  }
-
   async function requestQuote() {
-    if (chosenCount === 0 && !referenceFrames && project.narration.engine !== "gmi") {
-      setError("Teklif almak için en az bir video çekimi seçin, üstten GMI kare üretimini işaretleyin veya Seslendirme sekmesinden GMI dış sesini açın.");
-      return;
-    }
+    if (!providers.gmi) { setError("Üretim için GMI anahtarı gerekli."); return; }
     if (parsedBudget === null || !Number.isFinite(parsedBudget) || parsedBudget < 0) { setError("Ücretli üretim için 0 veya daha büyük bir bütçe girin."); return; }
     setBusy("quote"); setError("");
     try {
       const updated = await send(`/api/projects/${project.id}/quote`, {
-        revision: project.revision, quality, budget: parsedBudget, referenceFrames, frameModel: frameModel || null,
-        selections: videoScenes.map((scene) => ({ sceneId: scene.id, motion: selection[scene.id]?.ai ? "ai" : "free", videoModel: selection[scene.id]?.ai ? selection[scene.id]?.model ?? null : null })),
+        revision: project.revision, quality, budget: parsedBudget, referenceFrames: true, frameModel: frameModel || null,
+        selections: videoScenes.map((scene) => ({ sceneId: scene.id, motion: "ai" as const, videoModel: selection[scene.id]?.model ?? null })),
       });
       onProjectChange(updated);
       setNow(Date.now());
@@ -125,23 +101,18 @@ export default function PaidMotionPanel({ project, providers, videoModels, disab
         {TIERS.map((tier) => <button key={tier.id} type="button" className={quality === tier.id ? "is-selected" : ""} aria-pressed={quality === tier.id} onClick={() => setQuality(tier.id)}><strong>{tier.label}</strong><span>{tier.hint}</span></button>)}
       </fieldset>
 
-      <div className={`paid-scene ${referenceFrames ? "is-on" : ""}`} style={{ marginBottom: 10 }}>
-        <label><input type="checkbox" name="referenceFrames" checked={referenceFrames} disabled={disabled || busy !== null} onChange={(event) => setReferenceFrames(event.target.checked)} /><span><strong>{refSceneIds.size ? `Sahne karelerini GMI ile üret ve onaylı karakter/mekân sayfalarını referans ver (${videoScenes.length} çekim, ${refSceneIds.size} referanslı)` : `Sahne karelerini GMI görsel modelleriyle üret (${videoScenes.length} çekim)`}</strong><small>{refSceneIds.size ? "Onaylı karakter veya mekân sayfası olan çekimlerde sayfalar referans verilir; diğer kareler sahne promptundan seçilen GMI görsel modeliyle üretilir." : "Ücretsiz FLUX yerine sahne başlangıç karelerini doğrudan seçtiğin ücretli GMI görsel modeliyle (Hunyuan, Nano Banana, Seedream) üret."}</small></span></label>
-        <select aria-label="Kare modeli" name="frameModel" value={frameModel} disabled={disabled || busy !== null} onChange={(event) => { setFrameModel(event.target.value); setReferenceFrames(true); }}><option value="">Otomatik · en ucuz uygun kare modeli</option>{FRAME_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select>
+      <div className="paid-scene is-on" style={{ marginBottom: 10 }}>
+        <label><input type="checkbox" name="referenceFrames" checked readOnly disabled /><span><strong>Sahne kareleri GMI ile üretilir ve onaylı karakter/mekân sayfaları referans verilir ({videoScenes.length} çekim, {refSceneIds.size} referanslı)</strong><small>Her kare GMI görsel modeliyle üretilir. Onaylı sayfası olan çekimlerde sayfalar referans verilir; süreklilik için aynı mekânın önceki karesi de eklenir.</small></span></label>
+        <select aria-label="Kare modeli" name="frameModel" value={frameModel} disabled={disabled || busy !== null} onChange={(event) => setFrameModel(event.target.value)}><option value="">Otomatik · en ucuz uygun kare modeli</option>{FRAME_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select>
       </div>
 
       {project.narration.engine === "gmi" ? <p className="paid-note"><ShieldCheck size={13} /> Dış ses MiniMax Türkçe sesiyle bu teklife dahil edilir (karakter başına fiyat). Ayarı Seslendirme sekmesinden değiştirebilirsin.</p> : null}
 
-      <div className="paid-scene is-on" style={{ marginBottom: 10 }}>
-        <label><input type="checkbox" name="selectAllVideoScenes" checked={allChosen} disabled={disabled || busy !== null} onChange={(event) => toggleAllScenes(event.target.checked, bulkVideoModel || null)} /><span><strong>Tüm video çekimlerini seç ({chosenCount}/{videoScenes.length} seçili)</strong><small>Tüm çekimleri tek tıkla yapay zekâ videosuna dahil et veya sağdan tümü için tek bir video modeli belirle.</small></span></label>
-        <select aria-label="Tüm çekimler için video modeli" name="bulkVideoModel" value={bulkVideoModel} disabled={disabled || busy !== null} onChange={(event) => applyBulkVideoModel(event.target.value)}><option value="">Toplu model · Otomatik (en ucuz uygun)</option>{videoModels.map((model) => <option key={model.id} value={model.id}>Tümü: {model.label}</option>)}</select>
-      </div>
-
       <div className="paid-scenes">{videoScenes.map((scene) => {
-        const local = selection[scene.id] ?? { ai: false, model: null };
-        const frameHint = scene.imageSource === "generated" ? " · mevcut kare hazır" : referenceFrames ? " · önce GMI ile karesi üretilir" : providers.nvidia ? " · önce ücretsiz FLUX karesi üretilir" : "";
-        return <div key={scene.id} className={`paid-scene ${local.ai ? "is-on" : ""}`}>
-          <label><input type="checkbox" name={`scene-${scene.id}`} aria-label={`${scene.title} çekimini yapay zekâyla hareketlendir`} checked={local.ai} disabled={disabled || busy !== null} onChange={(event) => setSelection({ ...selection, [scene.id]: { ...local, ai: event.target.checked } })} /><span><strong>{scene.order.toString().padStart(2, "0")} · {scene.title}</strong><small>{scene.duration} sn{frameHint}</small></span></label>
+        const local = selection[scene.id] ?? { ai: true, model: null };
+        const frameHint = scene.imageSource === "generated" ? " · mevcut kare hazır" : " · önce GMI ile karesi üretilir";
+        return <div key={scene.id} className="paid-scene is-on">
+          <label><input type="checkbox" name={`scene-${scene.id}`} aria-label={`${scene.title} çekimi GMI ile hareketlendirilir`} checked readOnly disabled /><span><strong>{scene.order.toString().padStart(2, "0")} · {scene.title}</strong><small>{scene.duration} sn{frameHint}</small></span></label>
           <select aria-label={`${scene.title} için model`} name={`model-${scene.id}`} value={local.model ?? ""} disabled={disabled || busy !== null} onChange={(event) => setSelection({ ...selection, [scene.id]: { ai: true, model: event.target.value || null } })}><option value="">Otomatik · en ucuz uygun</option>{videoModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select>
         </div>;
       })}</div>
@@ -168,14 +139,14 @@ export default function PaidMotionPanel({ project, providers, videoModels, disab
             <td><small>Tasarruf {usd(line.saved)}</small></td>
           </tr>)}</tbody>
         </table>
-        {!quote.lines.length && quote.reused.length ? <p className="paid-empty">Seçtiğin her çekim bu kare ve hareketle zaten üretilmiş; yeni ücret gerekmiyor. &quot;Mevcut karelerle film&quot; bu videoları ücretsiz kullanır.</p> : null}
+        {!quote.lines.length && quote.reused.length ? <p className="paid-empty">Seçtiğin her çekim bu kare ve hareketle zaten üretilmiş; yeni ücret gerekmiyor. Onayladığında mevcut videolar yeniden kullanılır.</p> : null}
         {quote.errors.length ? <ul className="paid-errors">{quote.errors.map((item) => <li key={item}><TriangleAlert size={12} /> {item}</li>)}</ul> : null}
         <div className="paid-total">
           <span>Toplam tahmin <strong>{usd(quote.total)}</strong></span>
           <span>Kalan bütçe {usd(Math.max(0, quote.remaining))}</span>
           <span>{expired ? "Teklifin süresi doldu" : `Geçerlilik: ${Math.max(1, Math.ceil((Date.parse(quote.expiresAt) - now) / 60_000))} dk`}</span>
         </div>
-        <p className="paid-note"><ShieldCheck size={13} /> Onaylarsan seçili çekimlerin kareleri GMI depolamasına yüklenir (herkese açık ama tahmin edilemez bir adres). Tahminler GMI&apos;ın canlı fiyatlarıdır; belirsiz durumda yüksek fiyat varsayılır. Bir gönderimin sonucu belirsiz kalırsa istek tekrar gönderilmez, çekim ücretsiz yöntemle tamamlanır.</p>
+        <p className="paid-note"><ShieldCheck size={13} /> Onaylarsan çekimlerin kareleri GMI depolamasına yüklenir (herkese açık ama tahmin edilemez bir adres). Tahminler GMI&apos;ın canlı fiyatlarıdır; belirsiz durumda yüksek fiyat varsayılır. Bir gönderimin sonucu belirsiz kalırsa istek tekrar gönderilmez; üretim durur ve teklifi yenileyip yeniden başlatabilirsin.</p>
         <button type="button" className="studio-button studio-button-primary" disabled={disabled || busy !== null || expired || !quote.withinBudget} onClick={() => void approve()}>{busy === "start" ? <LoaderCircle size={14} className="studio-spin" /> : <Check size={14} />} {quote.withinBudget ? `Onayla ve üret · ${usd(quote.total)}` : "Bütçe veya model uygun değil"}</button>
       </div> : quote && dirty ? <p className="paid-empty">Ayarlar değişti; onaylamadan önce teklifi güncelle.</p> : null}
     </>}

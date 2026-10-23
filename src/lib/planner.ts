@@ -3,9 +3,9 @@ import type { AiPlan } from "./providers/nvidia";
 import type { Character, ModelProfile, ProviderStatus, Scene } from "./types";
 import { AppError } from "./validation";
 
-export const VIDEO_MODEL = "FLUX.2 Klein";
+export const VIDEO_MODEL = "GMI video · yapay zekâ";
 export const TITLE_MODEL = "Yazı kartı";
-const VIDEO_REASON = "Başlangıç karesi NVIDIA FLUX.2 Klein veya GMI Cloud ile üretilir ve Nemotron VL / DeepSeek ile kontrol edilir. Yapay zekâ videosu GMI Cloud modelleriyle üretilir.";
+const VIDEO_REASON = "Başlangıç karesi GMI görsel modeliyle onaylı karakter/mekân referansları kullanılarak üretilir; çekim GMI video modeliyle hareketlendirilir. Ücretsiz görsel veya kamera hareketi kullanılmaz.";
 const TITLE_REASON = "Yazı kartı doğrudan metin olarak çizilir; yapay zekâ metni değiştirmez, harfler eksiksiz görünür.";
 
 export function modelCatalog(providers: ProviderStatus): ModelProfile[] {
@@ -13,9 +13,9 @@ export function modelCatalog(providers: ProviderStatus): ModelProfile[] {
     { id: "deepseek-bridge", name: "DeepSeek V4.1 Flash + Web Arama", provider: "DeepSeek", type: "planning", description: "Modeller arası köprü: webde karakter ve referans arar (/v1/tools/search), senaryoyu planlar, görselleri denetler ve üretim modellerine görsel/metin girdisi hazırlar.", tags: ["Köprü", "Web arama", "Görsel hakem"], configured: Boolean(providers.deepseek), free: false },
     { id: "nemotron-planner", name: "Nemotron 3 Ultra", provider: "NVIDIA", type: "planning", description: "Senaryoyu karakterleri ve çekimleriyle planlar; her çekim için görsel ve hareket promptu yazar.", tags: ["Sahne planı", "Türkçe", "Ücretsiz katman"], configured: providers.nvidia, free: true },
     { id: "flux2-klein", name: "FLUX.2 Klein", provider: "NVIDIA", type: "image", description: "Her çekimin başlangıç karesini birkaç saniyede üretir. Karakter görünüşü her promptta tekrarlanır.", tags: ["Görsel", "Hızlı", "Ücretsiz katman"], configured: providers.nvidia, free: true },
-    { id: "nemotron-vl", name: "Nemotron 3.5 Super VL", provider: "NVIDIA", type: "review", description: "Üretilen kareyi çekim açıklamasıyla karşılaştırır; uyumsuz ya da bozuksa bir kez yeniden ürettirir. Yoğunlukta Nemotron 3 Nano Omni devreye girer.", tags: ["Kalite kontrolü", "Görsel anlama", "Ücretsiz katman"], configured: providers.nvidia, free: true },
-    { id: "gmi-nano-banana", name: "Gemini Nano Banana 2.1", provider: "GMI", type: "image", description: "Referans fotoğraflardan karakter sayfası ve onaylı karakter sayfalarından sahne karesi üretir.", tags: ["Referans görsel", "Karakter sayfası", "Ücretli"], configured: providers.gmi, free: false },
-    { id: "gmi-video", name: "GMI video yönlendirici", provider: "GMI", type: "video", description: "Seçtiğin çekimleri gerçek yapay zekâ videosuna çevirir. Kalite seviyene uyan modeller (Veo 3.1 Lite, Hailuo, Seedance, Wan, Kling, Veo 3.1 Fast) arasından canlı fiyata göre en ucuzunu seçer; teklifi onaylamadan ücret oluşmaz.", tags: ["Video", "Ücretli", "Onaylı teklif"], configured: providers.gmi, free: false },
+    { id: "nemotron-vl", name: "Nemotron 3.5 Super VL", provider: "NVIDIA", type: "review", description: "Üretilen kareyi çekim açıklaması ve onaylı karakter sayfalarıyla karşılaştırır; uyumsuz ya da bozuksa işaretler. Görsel üretmez.", tags: ["Kalite kontrolü", "Görsel anlama", "Ücretsiz katman"], configured: providers.nvidia, free: true },
+    { id: "gmi-nano-banana", name: "Gemini Nano Banana 2.1", provider: "GMI", type: "image", description: "Tüm karakter ve mekân sayfalarını üretir; referans fotoğraf varsa onu, yoksa tarifi kullanır. Onaylı sayfalar sahne karelerine referans olur.", tags: ["Referans görsel", "Karakter sayfası", "Ücretli"], configured: providers.gmi, free: false },
+    { id: "gmi-video", name: "GMI video yönlendirici", provider: "GMI", type: "video", description: "Her çekimi gerçek yapay zekâ videosuna çevirir. Kalite seviyene uyan modeller (Veo 3.1 Lite, Hailuo, Seedance, Wan, Kling, Veo 3.1 Fast) arasından canlı fiyata göre en ucuzunu seçer; teklifi onaylamadan ücret oluşmaz.", tags: ["Video", "Ücretli", "Onaylı teklif"], configured: providers.gmi, free: false },
   ];
 }
 

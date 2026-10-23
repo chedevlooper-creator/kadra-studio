@@ -72,28 +72,9 @@ export function outputSize(aspectRatio: AspectRatio): { width: number; height: n
 
 export type Motion = CameraMoveId;
 
-/** Maps the planner's free-text Turkish/English camera note to a Ken Burns move. */
+/** Maps the planner's free-text Turkish/English camera note to the film's camera vocabulary. */
 export function cameraMotion(camera: string): Motion {
   return cameraMove(camera).id;
-}
-
-function zoompan(motion: Motion, frames: number): { z: string; x: string; y: string } {
-  const t = `on/${Math.max(1, frames - 1)}`;
-  const centerX = "iw/2-(iw/zoom/2)";
-  const centerY = "ih/2-(ih/zoom/2)";
-  switch (motion) {
-    case "out": return { z: `1.15-0.15*${t}`, x: centerX, y: centerY };
-    case "right": return { z: "1.15", x: `(iw-iw/zoom)*${t}`, y: centerY };
-    case "left": return { z: "1.15", x: `(iw-iw/zoom)*(1-${t})`, y: centerY };
-    case "up": return { z: "1.15", x: centerX, y: `(ih-ih/zoom)*(1-${t})` };
-    case "down": return { z: "1.15", x: centerX, y: `(ih-ih/zoom)*${t}` };
-    case "still": return { z: `1+0.04*${t}`, x: centerX, y: centerY };
-    // Eases into a fast zoom over the first third, then holds.
-    case "crash": return { z: `1+0.45*(1-pow(1-min(1,${t}*3),3))`, x: centerX, y: centerY };
-    // A small steady zoom leaves room for two overlapping wobbles that read as a hand-held camera.
-    case "handheld": return { z: "1.08", x: `${centerX}+iw*(0.005*sin(on/6.1)+0.003*sin(on/2.3))`, y: `${centerY}+ih*(0.005*cos(on/7.3)+0.003*sin(on/2.9))` };
-    default: return { z: `1+0.15*${t}`, x: centerX, y: centerY };
-  }
 }
 
 const ENCODE = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-r", String(FPS)];

@@ -322,3 +322,14 @@ Doğrulama: `npm run check` → typecheck ✅, lint ✅, 95/95 test ✅.
 
 Sonraki adım: **Faz 1** (F4 idempotency TTL, F5 iptal/hata medya temizliği, F14 çift ödeme kenarı, F10/F11 yükleme dayanıklılığı, F6 özet bootstrap).
 
+### 2026-10-23 — Ürün yönü: yalnızca ücretli GMI üretimi
+
+Kullanıcı kararı doğrultusunda ücretsiz üretim yolu üründen kaldırıldı:
+
+- **Kare ve video:** Yeni akışta her video çekiminin karesi GMI görsel modeliyle, videosu GMI video modeliyle üretilir. Ücretsiz FLUX ve FFmpeg kamera hareketi (`zoompan`) kaldırıldı; FFmpeg yalnızca yazı kartı, ses/müzik ve montaj için kalır.
+- **Karakterler:** Tüm karakter/mekân sayfaları GMI Nano Banana 2.1 ile üretilir; fotoğraf varsa referans alınır. `paidOnly` modunda ücretsiz `flux` satırı oluşmaz.
+- **Teklif zorunlu:** Ücretsiz çalışma reddedilir; teklif tüm kareleri ve videoları içermek zorundadır. Teklifte eksik çekim varsa üretim başlamaz.
+- **Başarısızlık:** Ücretli bir adım başarısız olursa ücretsiz modele düşülmez; adım durur, ayrılan tutar iade edilir ve akış günlüğüne yazılır.
+- **Şablon:** İçe aktarılan storyboard çekimleri `motion: ai` olarak gelir. Mevcut projelerin verisi ve filmleri korunur.
+- **Doğrulama:** `npm run check` → typecheck ✅, lint ✅, 98/98 test ✅; `npm run build` ✅. Üç yeni test: ücretsiz çalışma reddi, teklifin tüm kare+videoları kapsaması, karakterlerin GMI'ya zorlanması, şablonun `ai` hareketi.
+

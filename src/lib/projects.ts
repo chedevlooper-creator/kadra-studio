@@ -336,10 +336,14 @@ function withoutOwner({ ...step }: StoredStep): RunStep {
 }
 
 /** The browser never sees lease owners. */
+/** Labels written by earlier builds; shown and edited as the current paid method. */
+const LEGACY_VIDEO_MODELS = ["FLUX.2 Klein + FFmpeg hareket", "FLUX.2 Klein"];
+const currentModel = (model: string) => LEGACY_VIDEO_MODELS.includes(model) ? VIDEO_MODEL : model === "FFmpeg yazı kartı" ? TITLE_MODEL : model;
+
 function publicProject(project: StoredProject): Project {
   const scenes = project.scenes.map((scene) => ({
     ...scene,
-    model: scene.model === "FLUX.2 Klein + FFmpeg hareket" ? VIDEO_MODEL : scene.model === "FFmpeg yazı kartı" ? TITLE_MODEL : scene.model,
+    model: currentModel(scene.model),
     modelReason: scene.modelReason?.replace(/ ve FFmpeg kamera hareketiyle klibe dönüştürülür/g, "")?.replace(/FFmpeg ile /g, "") ?? scene.modelReason,
   }));
   return project.run ? { ...project, scenes, run: { ...project.run, steps: project.run.steps.map(withoutOwner) } } : ({ ...project, scenes } as Project);
@@ -603,11 +607,11 @@ export function createProjectRepository(directory: string, options: RepositoryOp
     updateScene: (id: string, sceneId: string, revision: number, input: ScenePatch): Promise<Project> => transaction((database) => {
       const patch = parseInput(scenePatchSchema, input); const project = find(database, id); checkRevision(project, revision); requireIdle(project); parseInput(idSchema, sceneId);
       const scene = project.scenes.find((item) => item.id === sceneId); if (!scene) throw new AppError(404, "Çekim bulunamadı.");
-      if (patch.model && ![VIDEO_MODEL, TITLE_MODEL, "FLUX.2 Klein + FFmpeg hareket", "FFmpeg yazı kartı"].includes(patch.model)) throw new AppError(400, "Katalogdaki bir üretim yöntemini seçin.");
+      if (patch.model && ![VIDEO_MODEL, TITLE_MODEL, ...LEGACY_VIDEO_MODELS, "FFmpeg yazı kartı"].includes(patch.model)) throw new AppError(400, "Katalogdaki bir üretim yöntemini seçin.");
       if (patch.characterIds?.some((characterId) => !project.characters.some((character) => character.id === characterId))) throw new AppError(400, "Çekime yalnızca projedeki karakterler bağlanabilir.");
       const frameChanged = (patch.prompt !== undefined && patch.prompt !== scene.prompt) || (patch.description !== undefined && patch.description !== scene.description);
       Object.assign(scene, patch);
-      if (patch.kind || scene.model === "FLUX.2 Klein + FFmpeg hareket" || scene.model === "FFmpeg yazı kartı") { scene.model = (patch.kind ?? scene.kind) === "title" ? TITLE_MODEL : VIDEO_MODEL; }
+      if (patch.kind || scene.model === VIDEO_MODEL || LEGACY_VIDEO_MODELS.includes(scene.model) || scene.model === "FFmpeg yazı kartı") { scene.model = (patch.kind ?? scene.kind) === "title" ? TITLE_MODEL : VIDEO_MODEL; }
       if (frameChanged && scene.imageSource === "generated") { scene.imageSource = "reference"; scene.review = null; scene.repair = null; }
       project.scenes.forEach((item) => { item.status = "draft"; }); project.run = null; project.status = "planned"; project.duration = project.scenes.reduce((sum, item) => sum + item.duration, 0); touch(project, new Date().toISOString()); return publicProject(project);
     }),
@@ -649,7 +653,10 @@ export function createProjectRepository(directory: string, options: RepositoryOp
           paidVideoLines = new Map(quote.lines.filter((line) => (line.kind ?? "video") === "video").map((line) => [line.sceneId, line]));
           paidVoiceLines = new Map(quote.lines.filter((line) => line.kind === "voice").map((line) => [line.sceneId, line]));
           if (paidOnly) {
-            const missing = project.scenes.filter((scene) => scene.kind === "video" && (!paidImageLines.has(scene.id) || !paidVideoLines.has(scene.id)));
+            // A still-current frame or an already-paid clip is reused by an unpaid step; everything else must be quoted.
+            const reusedImages = new Set(quote.reused.filter((line) => line.kind === "image").map((line) => line.sceneId));
+            const reusedVideos = new Set(quote.reused.filter((line) => line.kind === "video").map((line) => line.sceneId));
+            const missing = project.scenes.filter((scene) => scene.kind === "video" && ((!paidImageLines.has(scene.id) && !reusedImages.has(scene.id)) || (!paidVideoLines.has(scene.id) && !reusedVideos.has(scene.id))));
             if (missing.length) throw new AppError(409, `${missing.length} çekimin kare veya videosu teklifte yok. Yeni bir teklif alın.`);
           }
           assertPaymentsAllowed();
