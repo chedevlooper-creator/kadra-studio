@@ -134,7 +134,7 @@ export default function StudioApp({ initialData, initialProjectId, initialView =
     window.scrollTo({ top: 0, behavior: "instant" });
   }
 
-  function launchPreset(presetId: string) { navigate("cinema"); setLaunch({ id: Date.now(), presetId }); }
+  function launchPreset(presetId: string, prompt?: string) { navigate("cinema"); setLaunch({ id: Date.now(), presetId, prompt }); }
 
   function saveExamples(value: boolean) {
     setShowExamples(value);
@@ -168,10 +168,10 @@ export default function StudioApp({ initialData, initialProjectId, initialView =
   return <WorkspaceShell view={view} selected={Boolean(selectedProject)} projects={projects} providers={providers} onNavigate={navigate} onOpen={openProject} onNew={() => setNewProject(true)}>
     <main id="main-content" className={selectedProject ? "page page-studio" : ["explore", "image", "video", "cinema"].includes(view) ? "workspace-main" : "page hf-page"}>
       {selectedProject ? <ProjectStudio key={`${selectedProject.id}:${selectedStep ?? "auto"}`} initialStep={selectedStep} project={selectedProject} providers={providers} videoModels={initialData.videoModels} onProjectChange={changeProject} onBack={() => navigate("projects")} notify={notify} />
-        : view === "explore" ? <DiscoverStudio projects={visibleProjects} favorites={favorites} onFavorite={toggleFavorite} onNavigate={navigate} onPreset={launchPreset} onOpen={openProject} onNew={() => setNewProject(true)} />
+        : view === "explore" ? <DiscoverStudio projects={visibleProjects} favorites={favorites} onFavorite={toggleFavorite} onNavigate={navigate} onPreset={launchPreset} onOpen={openProject} onNew={() => setNewProject(true)} onLaunchPrompt={launchPreset} />
         : view === "image" || view === "video" || view === "cinema" ? <CreationStudio key={`${view}:${launch?.id ?? "draft"}`} view={view} launch={launch} projects={projects} providers={providers} videoModels={initialData.videoModels} onProjectChange={changeProject} onOpen={openProject} onNavigate={navigate} onNew={() => setNewProject(true)} notify={notify} />
         : view === "effects" ? <><div className="hf-section-head"><div><span className="hf-eyebrow">GÖRSEL DİLİNİ BUL</span><h1>Tarzlar & efektler</h1><p>Bir tarz seç. Kamera, renk ve atmosferi kendi hikâyene uyarla.</p></div></div><PresetGallery favorites={favorites} onFavorite={toggleFavorite} onPreset={launchPreset} /></>
-        : view === "characters" || view === "audio" || view === "editor" ? <StudioTools key={view} tool={view} projects={projects} providers={providers} onProjectChange={changeProject} onOpen={openProject} onNew={() => setNewProject(true)} notify={notify} />
+        : view === "popcorn" || view === "factory" || view === "layers" || view === "characters" || view === "audio" || view === "editor" || view === "mcp" || view === "after-effects" ? <StudioTools key={view} tool={view} projects={projects} providers={providers} onProjectChange={changeProject} onOpen={openProject} onNew={() => setNewProject(true)} onNavigate={navigate} notify={notify} />
         : view === "favorites" ? <><div className="hf-section-head"><div><span className="hf-eyebrow">İLHAMINI KAYDET</span><h1>Favorilerim</h1><p>Kaydettiğin tarzlar ve üretilmiş varlıklar.</p></div></div><PresetGallery favorites={favorites} onFavorite={toggleFavorite} onPreset={launchPreset} onlyFavorites /><StudioAssets projects={projects} favorites={favorites} onFavorite={toggleFavorite} onOpen={openProject} onCreate={() => navigate("image")} onlyFavorites /></>
         : view === "projects" ? <Home projects={visibleProjects} allCount={projects.length} query={query} onQuery={setQuery} onOpen={openProject} onCreated={(project) => { changeProject(project); openProject(project); }} onMore={() => setNewProject(true)} onDuplicate={(project) => void duplicateProject(project)} onDelete={setConfirmDelete} notify={notify} />
         : view === "queue" ? <><PageTitle title="Üretimler" lead="Süren ve biten üretimler. Bir satıra dokununca proje açılır." /><QueueView projects={projects} onOpen={openProject} onUpdate={changeProject} /></>
@@ -181,7 +181,26 @@ export default function StudioApp({ initialData, initialProjectId, initialView =
     </main>
 
     <NewProjectDialog open={newProject} onClose={() => setNewProject(false)} onCreated={(project) => { changeProject(project); setNewProject(false); openProject(project); notify("Proje hazır."); }} />
-    <dialog ref={deleteDialog} {...({ closedby: "any" } as Record<string, string>)} className="sheet sheet-small" onCancel={() => { if (!deleting) setConfirmDelete(null); }} onClick={(event) => { if (event.target === event.currentTarget && !deleting) setConfirmDelete(null); }} aria-labelledby="delete-title">
+    <dialog
+      ref={deleteDialog}
+      {...({ closedby: "any" } as Record<string, string>)}
+      className="sheet sheet-small"
+      onCancel={() => { if (!deleting) setConfirmDelete(null); }}
+      onClick={(event) => {
+        if (deleting) return;
+        const dialog = event.currentTarget;
+        const rect = dialog.getBoundingClientRect();
+        const isInDialog =
+          rect.top <= event.clientY &&
+          event.clientY <= rect.top + rect.height &&
+          rect.left <= event.clientX &&
+          event.clientX <= rect.left + rect.width;
+        if (!isInDialog) {
+          setConfirmDelete(null);
+        }
+      }}
+      aria-labelledby="delete-title"
+    >
       <div className="sheet-body"><h2 id="delete-title">“{confirmDelete?.title}” silinsin mi?</h2><p>Senaryo, sahneler ve üretilen dosyalar bu bilgisayardan kalıcı olarak silinir.</p></div>
       <div className="sheet-actions"><button type="button" className="button" disabled={deleting} onClick={() => setConfirmDelete(null)}>Vazgeç</button><button type="button" className="button button-danger" disabled={deleting} onClick={() => void deleteProject()}>{deleting ? "Siliniyor…" : "Projeyi sil"}</button></div>
     </dialog>

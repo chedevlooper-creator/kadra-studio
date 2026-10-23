@@ -1,15 +1,28 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { AudioLines, ChevronDown, ChevronRight, Clapperboard, Film, FolderOpen, Heart, Home, ImageIcon, Layers3, Menu, PanelLeftClose, Plus, Search, Settings2, Shapes, Sparkles, Unplug, WandSparkles, X } from "lucide-react";
+import { ArrowUpDown, AudioLines, ChevronDown, ChevronRight, Clapperboard, Film, FolderOpen, Heart, Home, ImageIcon, Layers3, LayoutGrid, Menu, PanelLeftClose, Plus, Search, Settings2, Shapes, Sparkles, Unplug, WandSparkles, X } from "lucide-react";
 import type { Project, ProviderStatus } from "@/lib/types";
 import type { StudioView } from "@/lib/studio-draft";
 
 const PRIMARY: { id: StudioView; label: string; icon: typeof Film }[] = [
-  { id: "explore", label: "Keşfet", icon: Home }, { id: "image", label: "Görsel", icon: ImageIcon }, { id: "video", label: "Video", icon: Film }, { id: "audio", label: "Ses", icon: AudioLines },
+  { id: "explore", label: "Keşfet", icon: Home },
+  { id: "image", label: "Görsel", icon: ImageIcon },
+  { id: "video", label: "Video", icon: Film },
+  { id: "audio", label: "Ses", icon: AudioLines },
 ];
 const SECONDARY: { id: StudioView; label: string; badge?: string }[] = [
-  { id: "cinema", label: "Cinema Studio", badge: "YENİ" }, { id: "effects", label: "Efektler" }, { id: "characters", label: "Karakterler" }, { id: "editor", label: "Video Editör" }, { id: "projects", label: "Projelerim" }, { id: "queue", label: "Üretimler" },
+  { id: "cinema", label: "Cinema Studio", badge: "YENİ" },
+  { id: "popcorn", label: "Popcorn Storyboard", badge: "YENİ" },
+  { id: "factory", label: "Content Factory", badge: "YENİ" },
+  { id: "mcp", label: "MCP & Ajanlar", badge: "MCP" },
+  { id: "after-effects", label: "After Effects & Motion", badge: "AE" },
+  { id: "layers", label: "Katmanlar & Onarım", badge: "EDIT" },
+  { id: "effects", label: "Efektler" },
+  { id: "characters", label: "Karakterler · Soul ID" },
+  { id: "editor", label: "Video Editör" },
+  { id: "projects", label: "Projelerim" },
+  { id: "queue", label: "Üretimler" },
 ];
 
 export function KadraMark({ small = false }: { small?: boolean }) {
@@ -22,9 +35,15 @@ export default function WorkspaceShell({ view, selected, projects, providers, on
   const [menu, setMenu] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"recent" | "alpha">("recent");
   const cinema = view === "cinema" && !selected;
   const running = projects.filter((project) => project.run?.status === "running").length;
   function navigate(next: StudioView) { setMenu(false); onNavigate(next); }
+
+  const sidebarProjects = projects
+    .filter((project) => project.title.toLocaleLowerCase("tr").includes(search.toLocaleLowerCase("tr")))
+    .toSorted((a, b) => sortBy === "alpha" ? a.title.localeCompare(b.title, "tr") : b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, 12);
 
   return <div className={`workspace ${cinema ? "workspace-cinema" : ""} ${collapsed ? "sidebar-collapsed" : ""}`}>
     <a className="skip-link" href="#main-content">İçeriğe geç</a>
@@ -34,6 +53,7 @@ export default function WorkspaceShell({ view, selected, projects, providers, on
         <nav className="workspace-primary" aria-label="Oluşturma araçları">{PRIMARY.map((item) => <button key={item.id} type="button" aria-current={!selected && view === item.id ? "page" : undefined} onClick={() => navigate(item.id)}>{item.label}</button>)}</nav>
         <span className="header-divider" />
         <button type="button" className="header-cinema" aria-current={!selected && view === "cinema" ? "page" : undefined} onClick={() => navigate("cinema")}><Clapperboard size={15} />Cinema Studio <span>YENİ</span></button>
+        <button type="button" className="header-cinema" aria-current={!selected && view === "popcorn" ? "page" : undefined} onClick={() => navigate("popcorn")}><LayoutGrid size={14} />Popcorn <span>YENİ</span></button>
         <div className="workspace-header-end">
           <button type="button" className="header-assets" onClick={() => navigate("library")}><FolderOpen size={15} /><span>Varlıklarım</span></button>
           <button type="button" className="workspace-status" onClick={() => navigate("connections")} title="Servis bağlantıları"><i className={providers.gmi ? "connected" : ""} /><span>{providers.gmi ? "Stüdyo hazır" : "Bağlantılar"}</span></button>
@@ -43,17 +63,18 @@ export default function WorkspaceShell({ view, selected, projects, providers, on
       </header>
       <nav className="workspace-secondary" aria-label="Stüdyolar">{SECONDARY.map((item) => <button key={item.id} type="button" aria-current={!selected && view === item.id ? "page" : undefined} onClick={() => navigate(item.id)}>{item.label}{item.badge ? <span>{item.badge}</span> : null}{item.id === "queue" && running ? <i>{running}</i> : null}</button>)}<button type="button" onClick={() => navigate("favorites")}><Heart size={13} />Favoriler</button><button type="button" onClick={() => navigate("connections")}><Unplug size={13} />Bağlantılar</button></nav>
     </> : <>
-      <header className="cinema-mobile-header"><button type="button" onClick={() => navigate("explore")} aria-label="Keşfete dön"><KadraMark small /></button><strong>Cinema Studio</strong><button type="button" className="icon-button" aria-label="Menüyü aç" aria-expanded={menu} onClick={() => setMenu(!menu)}><Menu size={20} /></button></header>
+      <header className="cinema-mobile-header"><button type="button" onClick={() => navigate("explore")} aria-label="Keşfete dön"><KadraMark small /></button><strong>Cinema Studio 4.0</strong><button type="button" className="icon-button" aria-label="Menüyü aç" aria-expanded={menu} onClick={() => setMenu(!menu)}><Menu size={20} /></button></header>
       <aside className="cinema-sidebar" aria-label="Cinema Studio gezinme">
         <div className="cinema-sidebar-brand"><button type="button" onClick={() => navigate("explore")}><KadraMark small />{!collapsed ? <><strong>Cinema Studio</strong><ChevronDown size={13} /></> : null}</button><button type="button" className="icon-button" aria-label={collapsed ? "Kenar çubuğunu aç" : "Kenar çubuğunu daralt"} onClick={() => setCollapsed(!collapsed)}>{collapsed ? <ChevronRight size={15} /> : <PanelLeftClose size={15} />}</button></div>
         <nav className="cinema-sidebar-nav" aria-label="Stüdyo bölümleri">{[
           { id: "cinema" as const, label: "Ana sayfa", icon: Home, tone: "silver" },
           { id: "library" as const, label: "Üretimlerim", icon: Sparkles, tone: "cyan" },
-          { id: "characters" as const, label: "Karakterlerim", icon: Shapes, tone: "blue" },
+          { id: "characters" as const, label: "Karakter & Mekânlarım", icon: Shapes, tone: "blue" },
+          { id: "popcorn" as const, label: "Popcorn Storyboard", icon: LayoutGrid, tone: "silver" },
           { id: "favorites" as const, label: "Favorilerim", icon: Heart, tone: "pink" },
-          { id: "explore" as const, label: "Keşfet", icon: Layers3, tone: "silver" },
+          { id: "explore" as const, label: "Topluluk & Keşfet", icon: Layers3, tone: "silver" },
         ].map((item) => <button key={item.id} type="button" title={collapsed ? item.label : undefined} aria-label={item.label} aria-current={view === item.id ? "page" : undefined} onClick={() => navigate(item.id)}><span className={`sidebar-tool-icon tone-${item.tone}`}><item.icon size={16} /></span>{!collapsed ? item.label : null}</button>)}</nav>
-        {!collapsed ? <div className="sidebar-projects"><label className="sidebar-project-label"><span>Projeler</span><Search size={13} /><input aria-label="Kenar çubuğunda proje ara" placeholder="Ara…" value={search} onChange={(event) => setSearch(event.target.value)} /></label><button type="button" className="sidebar-new" onClick={onNew}><Plus size={16} />Yeni proje</button><div className="sidebar-project-list">{projects.filter((project) => project.title.toLocaleLowerCase("tr").includes(search.toLocaleLowerCase("tr"))).slice(0, 12).map((project) => <button key={project.id} type="button" title={project.title} onClick={() => onOpen(project)}><Clapperboard size={17} /><span>{project.title}</span>{project.run?.status === "running" ? <i className="live-dot" /> : null}</button>)}</div></div> : null}
+        {!collapsed ? <div className="sidebar-projects"><div className="sidebar-project-label"><span>Projeler</span><button type="button" className="sidebar-sort-btn" title={sortBy === "recent" ? "Ada göre sırala" : "Son güncellenene göre sırala"} aria-label="Projeleri sırala" onClick={() => setSortBy((current) => current === "recent" ? "alpha" : "recent")}><ArrowUpDown size={12} /></button><label className="sidebar-search-wrap"><Search size={13} /><input aria-label="Kenar çubuğunda proje ara" placeholder="Ara…" value={search} onChange={(event) => setSearch(event.target.value)} /></label></div><button type="button" className="sidebar-new" onClick={onNew}><Plus size={16} />Yeni proje</button><div className="sidebar-project-list">{sidebarProjects.map((project) => <button key={project.id} type="button" title={project.title} onClick={() => onOpen(project)}><Clapperboard size={17} /><span>{project.title}</span>{project.run?.status === "running" ? <i className="live-dot" /> : null}</button>)}</div></div> : null}
         <div className="sidebar-bottom"><button type="button" onClick={() => navigate("projects")} aria-label="Tüm projeler"><FolderOpen size={17} />{!collapsed ? <><span>Tüm projeler</span><ChevronRight size={14} /></> : null}</button><button type="button" onClick={() => navigate("connections")} aria-label="Bağlantılar"><Unplug size={17} />{!collapsed ? <><span>Bağlantılar</span><i className={providers.gmi ? "ready-dot" : "offline-dot"} /></> : null}</button><button type="button" onClick={() => navigate("settings")} aria-label="Ayarlar"><span className="workspace-avatar">K</span>{!collapsed ? <><span>Kişisel çalışma alanı</span><Settings2 size={15} /></> : null}</button></div>
       </aside>
     </>}

@@ -87,7 +87,27 @@ export default function RepairDialog({ project, target, onClose, onStarted }: { 
     finally { setBusy(false); }
   }
 
-  return <dialog ref={dialog} className="sheet repair-dialog" aria-labelledby="repair-title" onCancel={onClose} onClose={onClose}>
+  return <dialog
+    ref={dialog}
+    {...({ closedby: "any" } as Record<string, string>)}
+    className="sheet repair-dialog"
+    aria-labelledby="repair-title"
+    onCancel={onClose}
+    onClose={onClose}
+    onClick={(event) => {
+      if (busy) return;
+      const el = event.currentTarget;
+      const rect = el.getBoundingClientRect();
+      const isInDialog =
+        rect.top <= event.clientY &&
+        event.clientY <= rect.top + rect.height &&
+        rect.left <= event.clientX &&
+        event.clientX <= rect.left + rect.width;
+      if (!isInDialog) {
+        onClose();
+      }
+    }}
+  >
     {target && image ? <div>
       <div className="sheet-head"><div><h2 id="repair-title">{title}: bir bölgeyi onar</h2><p className="quiet">Yalnızca çizdiğin alan yeniden çizilir; gerisi piksel piksel aynı kalır.</p></div><button type="button" className="icon-button" aria-label="Kapat" onClick={onClose}><X size={18} /></button></div>
       <div className="sheet-body">
