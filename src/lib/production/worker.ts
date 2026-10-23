@@ -14,7 +14,7 @@ import { cameraMove, lookOf } from "../cinema";
 import { GMI_VOICES, LOCAL_VOICE, narrationText, VOICE_LABEL, VOICE_MODEL } from "../voices";
 import { applySoundtrack, compositeRegion, concatClips, convertAudio, FfmpegError, fitImage, inspectAudio, inspectVideo, probeImage, renderImageClip, renderMask, renderTitleClip, renderVideoClip } from "./ffmpeg";
 import { narrationTracks, speakLocally, standInSettings, voiceCandidates, voiceFile, voiceKey } from "./narration";
-import { imagePrompt, issueInstruction, repairPrompt, sceneSheetPrompt, sheetPrompt, videoPrompt } from "./prompts";
+import { compileImagePrompt, compileScenePrompt, compileVideoPrompt, imagePrompt, issueInstruction, repairPrompt, sheetPrompt } from "./prompts";
 import { frameModel } from "../routing/frame-router";
 import { aiClipKey, approvedCharacterSheets, cameraClipKey, clipFile, continuityFrame, editSize, frameIsCurrent, frameKeys, keptClips, REPAIR_MODEL, repairRegions, reusableClip, titleClipKey } from "./reuse";
 
@@ -194,11 +194,12 @@ export function createProductionWorker(options: WorkerOptions) {
         const imageUrls = await Promise.all(references.map((image) => gmi.upload(image, image[0] === 0x89 ? "png" : "jpg")));
         if (!(await options.repository.markSubmitting(project.id, runId, step.id))) throw new AppError(409, "Üretim durdurulduğu için istek gönderilmedi.");
         try {
-          const prompt = sheets.length
-            ? sceneSheetPrompt(project, scene, sheets.map((item) => item.character).slice(0, references.length - (previousImage ? 1 : 0)), Boolean(previousImage))
-            : imagePrompt(project, scene);
+          const usedSheets = sheets.slice(0, Math.max(0, references.length - (previousImage ? 1 : 0)));
+          const compiled = usedSheets.length
+            ? compileScenePrompt(project, scene, usedSheets.map((item) => item.character), Boolean(previousImage), spec.maxPrompt)
+            : compileImagePrompt(project, scene, spec.maxPrompt);
           requestId = await gmi.submit(spec.id, spec.payload({
-            prompt,
+            prompt: compiled.prompt,
             imageUrls,
             aspectRatio: project.aspectRatio,
             seed: seedFor(`${scene.id}:${runId}`, 0),
@@ -293,7 +294,7 @@ export function createProductionWorker(options: WorkerOptions) {
       if (!(await options.repository.markSubmitting(project.id, runId, step.id))) throw new AppError(409, "Üretim durdurulduğu için istek gönderilmedi.");
       const duration = spec.durations.find((value) => value >= scene.duration) ?? spec.durations[spec.durations.length - 1];
       try {
-        requestId = await engine.submit(spec.id, spec.payload({ prompt: videoPrompt(project, scene), imageUrl, duration, aspectRatio: project.aspectRatio, seed: seedFor(`${scene.id}:${runId}`, 0), camera: cameraMove(scene.camera).id }));
+        requestId = await engine.submit(spec.id, spec.payload({ prompt: compileVideoPrompt(project, scene, spec.maxPrompt).prompt, imageUrl, duration, aspectRatio: project.aspectRatio, seed: seedFor(`${scene.id}:${runId}`, 0), camera: cameraMove(scene.camera).id }));
       } catch (error) {
         const { message, retryable } = failure(error);
         // A clear rejection created no job; a lost connection may have.

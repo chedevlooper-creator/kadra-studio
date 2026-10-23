@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, Clapperboard, Info, LoaderCircle, Receipt, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
 import { FRAME_MODELS } from "@/lib/routing/frame-router";
+import { buildShotPreview } from "@/lib/preview";
 import type { LedgerEntry, Project, ProviderStatus, QualityTier, VideoModelOption } from "@/lib/types";
 
 type Selection = Record<string, { ai: boolean; model: string | null }>;
@@ -59,6 +60,7 @@ export default function PaidMotionPanel({ project, providers, videoModels, disab
     const local = selection[scene.id];
     return Boolean(local?.ai) !== (scene.motion === "ai") || (local?.ai && (local.model ?? null) !== scene.videoModel);
   }), [quality, parsedBudget, referenceFrames, quotedRefFrames, frameModel, selection, project.quality, project.budget, project.frameModel, videoScenes]);
+  const preview = useMemo(() => (quote && !dirty ? buildShotPreview(project) : []), [quote, dirty, project]);
 
   useEffect(() => {
     if (!quote || expired) return;
@@ -146,6 +148,24 @@ export default function PaidMotionPanel({ project, providers, videoModels, disab
           <span>Kalan bütçe {usd(Math.max(0, quote.remaining))}</span>
           <span>{expired ? "Teklifin süresi doldu" : `Geçerlilik: ${Math.max(1, Math.ceil((Date.parse(quote.expiresAt) - now) / 60_000))} dk`}</span>
         </div>
+        {preview.length ? <details className="paid-preview">
+          <summary style={{ cursor: "pointer", fontSize: 10, color: "#b9b4f6" }}>Çekim özeti: gidecek promptlar ve referanslar ({preview.length})</summary>
+          <div style={{ display: "grid", gap: 10, maxHeight: 340, overflow: "auto", marginTop: 8 }}>
+            {preview.map((line) => <article key={line.sceneId} style={{ borderTop: "1px solid #2f3141", paddingTop: 8 }}>
+              <strong style={{ fontSize: 11, color: "#e7e8f3" }}>{line.title}</strong>
+              {line.frame ? <div style={{ marginTop: 6 }}>
+                <small style={{ display: "block", fontSize: 9, color: "#8d91a3" }}>Kare · {line.frame.modelLabel}{line.frame.truncated ? " · kısaltıldı" : ""}</small>
+                {line.frame.references.length ? <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "6px 0" }}>{line.frame.references.map((reference, index) => <figure key={`${reference.url}-${index}`} style={{ margin: 0, width: 56 }}><img src={reference.url} alt={reference.name} style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 4, background: "#121513" }} /><figcaption style={{ fontSize: 8, lineHeight: 1.3, color: "#8d91a3" }}>{reference.name}</figcaption></figure>)}</div> : <p className="paid-note">Referans görsel yok; kare yalnızca metinden üretilecek.</p>}
+                <p style={{ fontSize: 9, lineHeight: 1.6, color: "#a9adc0", margin: "6px 0", wordBreak: "break-word" }}>{line.frame.prompt}</p>
+              </div> : null}
+              {line.video ? <div style={{ marginTop: 6 }}>
+                <small style={{ display: "block", fontSize: 9, color: "#8d91a3" }}>Video · {line.video.modelLabel}{line.video.truncated ? " · kısaltıldı" : ""}</small>
+                <p style={{ fontSize: 9, lineHeight: 1.6, color: "#a9adc0", margin: "6px 0", wordBreak: "break-word" }}>{line.video.prompt}</p>
+              </div> : null}
+              {line.warnings.map((warning) => <p key={warning} className="paid-errors"><TriangleAlert size={12} /> {warning}</p>)}
+            </article>)}
+          </div>
+        </details> : null}
         <p className="paid-note"><ShieldCheck size={13} /> Onaylarsan çekimlerin kareleri GMI depolamasına yüklenir (herkese açık ama tahmin edilemez bir adres). Tahminler GMI&apos;ın canlı fiyatlarıdır; belirsiz durumda yüksek fiyat varsayılır. Bir gönderimin sonucu belirsiz kalırsa istek tekrar gönderilmez; üretim durur ve teklifi yenileyip yeniden başlatabilirsin.</p>
         <button type="button" className="studio-button studio-button-primary" disabled={disabled || busy !== null || expired || !quote.withinBudget} onClick={() => void approve()}>{busy === "start" ? <LoaderCircle size={14} className="studio-spin" /> : <Check size={14} />} {quote.withinBudget ? `Onayla ve üret · ${usd(quote.total)}` : "Bütçe veya model uygun değil"}</button>
       </div> : quote && dirty ? <p className="paid-empty">Ayarlar değişti; onaylamadan önce teklifi güncelle.</p> : null}

@@ -658,6 +658,16 @@ export function createProjectRepository(directory: string, options: RepositoryOp
             const reusedVideos = new Set(quote.reused.filter((line) => line.kind === "video").map((line) => line.sceneId));
             const missing = project.scenes.filter((scene) => scene.kind === "video" && ((!paidImageLines.has(scene.id) && !reusedImages.has(scene.id)) || (!paidVideoLines.has(scene.id) && !reusedVideos.has(scene.id))));
             if (missing.length) throw new AppError(409, `${missing.length} çekimin kare veya videosu teklifte yok. Yeni bir teklif alın.`);
+            for (const line of paidImageLines.values()) {
+              const scene = project.scenes.find((item) => item.id === line.sceneId);
+              const spec = frameModel(line.modelId);
+              if (!scene || !spec) throw new AppError(409, "Teklifteki kare modeli artık kullanılamıyor; yeni teklif alın.");
+              const references = approvedCharacterSheets(project, scene).length + (continuityFrame(project, scene) ? 1 : 0);
+              if (references > spec.maxReferences) throw new AppError(409, `${scene.title}: ${references} referans, ${spec.label} modelinin ${spec.maxReferences} referans sınırını aşıyor.`);
+            }
+            for (const line of paidVideoLines.values()) {
+              if (!VIDEO_MODELS.some((model) => model.id === line.modelId)) throw new AppError(409, "Teklifteki video modeli artık kullanılamıyor; yeni teklif alın.");
+            }
           }
           assertPaymentsAllowed();
           assertSpendLimit(database, money([...paidImageLines.values(), ...paidVideoLines.values(), ...paidVoiceLines.values()].reduce((sum, line) => sum + line.estimate, 0)));

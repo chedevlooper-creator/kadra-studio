@@ -333,3 +333,11 @@ Kullanıcı kararı doğrultusunda ücretsiz üretim yolu üründen kaldırıld�
 - **Şablon:** İçe aktarılan storyboard çekimleri `motion: ai` olarak gelir. Mevcut projelerin verisi ve filmleri korunur.
 - **Doğrulama:** `npm run check` → typecheck ✅, lint ✅, 98/98 test ✅; `npm run build` ✅. Üç yeni test: ücretsiz çalışma reddi, teklifin tüm kare+videoları kapsaması, karakterlerin GMI'ya zorlanması, şablonun `ai` hareketi.
 
+### 2026-10-23 — P0: ücretli üretimde isabet
+
+- **Prompt derleyici:** `compileImagePrompt`, `compileScenePrompt`, `compileVideoPrompt`; model başına `maxPrompt` bütçesi. Metin sınırı aşınca düşük öncelikli bölümler atılıyor, ana cümle kelime sınırında kesiliyor ve **“no text / no watermark” kuyruğu her zaman korunuyor**.
+- **Teklif önizlemesi:** Onaydan önce her çekim için gidecek kare/video promptu, sıralı referans küçük resimleri ve uyarılar (`buildShotPreview`). Referanssız kare, kısaltılmış prompt ve referans sınırı aşımı burada görünüyor.
+- **Preflight:** Üretim başlamadan önce kare/video modelinin hâlâ geçerli olduğu ve referans sayısının `maxReferences` sınırını aşmadığı doğrulanıyor; aşarsa 409 ile duruyor.
+- **Doğrulama:** `npm run check` → 107/107 test ✅; `npm run build` ✅.
+- **Sırada (P1):** Promptların DeepSeek ile İngilizce’ye normalize edilip çekimde saklanması; hakem reddinde bütçe içinde bir otomatik tekrar; video QC (ilk kare benzerliği, süre/fps, siyah kare).
+

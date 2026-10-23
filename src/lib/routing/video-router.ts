@@ -9,6 +9,8 @@ export interface VideoModelSpec {
   label: string;
   /** Initial, unmeasured quality grade (1–4) used only to filter by tier. */
   quality: number;
+  /** Model-side prompt character budget; the compiler keeps the style/negative tail inside it. */
+  maxPrompt: number;
   durations: number[];
   aspectRatios: AspectRatio[] | "any";
   priceKey: string;
@@ -19,20 +21,20 @@ const range = (from: number, to: number) => Array.from({ length: to - from + 1 }
 
 /** Image-to-video models whose GMI request schema has been read and mapped. Others are never routed to. */
 export const VIDEO_MODELS: VideoModelSpec[] = [
-  { id: "veo-3.1-lite-generate-001", label: "Veo 3.1 Lite", quality: 2, durations: [4, 6, 8], aspectRatios: ["16:9", "9:16"], priceKey: "720p",
+  { id: "veo-3.1-lite-generate-001", label: "Veo 3.1 Lite", quality: 2, maxPrompt: 1_900, durations: [4, 6, 8], aspectRatios: ["16:9", "9:16"], priceKey: "720p",
     payload: ({ prompt, imageUrl, duration, aspectRatio, seed }) => ({ prompt, image: imageUrl, durationSeconds: duration, aspectRatio, resolution: "720p", generateAudio: false, personGeneration: "allow_adult", seed }) },
-  { id: "Minimax-Hailuo-2.3-Fast", label: "Hailuo 2.3 Fast", quality: 2, durations: [6, 10], aspectRatios: "any", priceKey: "768p",
+  { id: "Minimax-Hailuo-2.3-Fast", label: "Hailuo 2.3 Fast", quality: 2, maxPrompt: 1_900, durations: [6, 10], aspectRatios: "any", priceKey: "768p",
     // Hailuo reads its own bracketed camera commands at the start of the prompt.
     payload: ({ prompt, imageUrl, duration, camera }) => ({ prompt: camera ? `${CAMERA_MOVES.find((move) => move.id === camera)!.hailuo} ${prompt}` : prompt, first_frame_image: imageUrl, duration, resolution: "768P", prompt_optimizer: true }) },
-  { id: "seedance-2-0-fast-260128", label: "Seedance 2.0 Fast", quality: 2, durations: range(4, 12), aspectRatios: ["16:9", "9:16", "1:1"], priceKey: "720p",
+  { id: "seedance-2-0-fast-260128", label: "Seedance 2.0 Fast", quality: 2, maxPrompt: 1_900, durations: range(4, 12), aspectRatios: ["16:9", "9:16", "1:1"], priceKey: "720p",
     payload: ({ prompt, imageUrl, duration, aspectRatio, seed }) => ({ prompt, first_frame: imageUrl, duration, resolution: "720p", ratio: aspectRatio, generate_audio: false, watermark: false, seed }) },
-  { id: "wan2.6-i2v", label: "Wan 2.6", quality: 2, durations: [5, 10, 15], aspectRatios: "any", priceKey: "720p",
+  { id: "wan2.6-i2v", label: "Wan 2.6", quality: 2, maxPrompt: 1_900, durations: [5, 10, 15], aspectRatios: "any", priceKey: "720p",
     payload: ({ prompt, imageUrl, duration, seed }) => ({ prompt, img_url: imageUrl, resolution: "720P", duration, shot_type: "single", audio: false, watermark: false, seed }) },
-  { id: "kling-v2-5-turbo", label: "Kling 2.5 Turbo", quality: 3, durations: [5, 10], aspectRatios: "any", priceKey: "",
+  { id: "kling-v2-5-turbo", label: "Kling 2.5 Turbo", quality: 3, maxPrompt: 1_900, durations: [5, 10], aspectRatios: "any", priceKey: "",
     payload: ({ prompt, imageUrl, duration }) => ({ prompt, image: imageUrl, duration: String(duration), mode: "pro" }) },
-  { id: "veo-3.1-fast-generate-001", label: "Veo 3.1 Fast", quality: 3, durations: [4, 6, 8], aspectRatios: ["16:9", "9:16"], priceKey: "720p",
+  { id: "veo-3.1-fast-generate-001", label: "Veo 3.1 Fast", quality: 3, maxPrompt: 1_900, durations: [4, 6, 8], aspectRatios: ["16:9", "9:16"], priceKey: "720p",
     payload: ({ prompt, imageUrl, duration, aspectRatio, seed }) => ({ prompt, image: imageUrl, durationSeconds: duration, aspectRatio, resolution: "720p", generateAudio: false, personGeneration: "allow_adult", seed }) },
-  { id: "kling-v3-image-to-video", label: "Kling 3.0", quality: 4, durations: range(3, 15), aspectRatios: "any", priceKey: "",
+  { id: "kling-v3-image-to-video", label: "Kling 3.0", quality: 4, maxPrompt: 1_900, durations: range(3, 15), aspectRatios: "any", priceKey: "",
     payload: ({ prompt, imageUrl, duration }) => ({ prompt, image: imageUrl, duration: String(duration), sound: "off", mode: "std" }) },
 ];
 

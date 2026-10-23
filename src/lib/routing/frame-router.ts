@@ -10,6 +10,8 @@ export interface FrameModelSpec {
   /** Kadra's own 1–5 rating of how well the model keeps faces and sets from its references. */
   quality: number;
   maxReferences: number;
+  /** Model-side prompt character budget; the compiler keeps the style/negative tail inside it. */
+  maxPrompt: number;
   payload(request: FrameRequest): Record<string, unknown>;
 }
 
@@ -17,13 +19,13 @@ const RATIOS: AspectRatio[] = ["16:9", "9:16", "1:1"];
 
 /** Image models that draw a scene frame (with or without reference images: character sheets, location plates, the previous shot). */
 export const FRAME_MODELS: FrameModelSpec[] = [
-  { id: "hy-image-v3.5-preview", label: "Hunyuan Image 3.5", quality: 2, maxReferences: 5,
+  { id: "hy-image-v3.5-preview", label: "Hunyuan Image 3.5", quality: 2, maxReferences: 5, maxPrompt: 2_000,
     payload: ({ prompt, imageUrls, aspectRatio, seed }) => ({ prompt, ...(imageUrls.length ? { image: imageUrls } : {}), size: { "16:9": "1920x1080", "9:16": "1080x1920", "1:1": "1024x1024" }[aspectRatio], seed: Math.max(1, seed) }) },
-  { id: "gemini-3.1-flash-lite-image", label: "Nano Banana 2 Lite", quality: 2, maxReferences: 14,
+  { id: "gemini-3.1-flash-lite-image", label: "Nano Banana 2 Lite", quality: 2, maxReferences: 14, maxPrompt: 2_000,
     payload: ({ prompt, imageUrls, aspectRatio }) => ({ prompt, ...(imageUrls.length ? { image: imageUrls } : {}), aspect_ratio: aspectRatio, image_output_format: "png" }) },
-  { id: "seedream-5.0-lite", label: "Seedream 5.0 Lite", quality: 3, maxReferences: 14,
+  { id: "seedream-5.0-lite", label: "Seedream 5.0 Lite", quality: 3, maxReferences: 14, maxPrompt: 2_000,
     payload: ({ prompt, imageUrls, aspectRatio }) => ({ prompt, ...(imageUrls.length ? { image: imageUrls } : {}), size: { "16:9": "4096x2304", "9:16": "2304x4096", "1:1": "3072x3072" }[aspectRatio], output_format: "jpeg", watermark: false }) },
-  { id: "gemini-nano-banana-2.1", label: "Nano Banana 2.1", quality: 4, maxReferences: 14,
+  { id: "gemini-nano-banana-2.1", label: "Nano Banana 2.1", quality: 4, maxReferences: 14, maxPrompt: 2_000,
     payload: ({ prompt, imageUrls, aspectRatio }) => ({ prompt, ...(imageUrls.length ? { image: imageUrls } : {}), image_size: "1K", aspect_ratio: aspectRatio, thinking: "medium", image_output_format: "png" }) },
 ];
 
