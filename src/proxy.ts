@@ -2,6 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 
 // This milestone is intentionally local-only; it has no multi-user session layer yet.
 export function proxy(request: NextRequest) {
+  if (process.env.VERCEL || process.env.VERCEL_ENV) {
+    return NextResponse.next();
+  }
   const host = request.headers.get("host") ?? "";
   const hostname = host.startsWith("[") ? host.slice(1, host.indexOf("]")) : host.split(":")[0];
   if (!["localhost", "127.0.0.1", "::1"].includes(hostname.toLowerCase())) {
