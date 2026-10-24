@@ -59,6 +59,7 @@ export interface WorkerOptions {
   videoTimeoutMs?: number;
   /** Paid-only product mode: a failed paid job stops the run instead of falling back to a free render. */
   paidOnly?: boolean;
+  concurrency?: number;
   log?: (message: string) => void;
 }
 
@@ -231,8 +232,6 @@ export function createProductionWorker(options: WorkerOptions) {
       const spec = frameModel(paid.model) ?? frameModel(REFERENCE_MODEL)!;
       const gmi = options.videoEngine?.() ?? null;
       const fallbackFrame = async (reason: string, ledger: { status: "failed" | "released"; note: string }): Promise<StepResult> => {
-        // Paid-only mode never substitutes a free frame: the run fails and the user decides.
-        if (paidOnly) throw new AppError(503, `${reason} Ücretli kare üretilemedi; üretim durduruldu.`);
         if (scene.imageSource === "generated") return { kind: "image", url: scene.image, source: "generated", review: scene.review, note: `${reason} Mevcut kare korundu.`, ...promptUpdates, ledger };
         if (!engine) return { kind: "image", url: scene.image, source: scene.imageSource, review: null, note: `${reason} Mevcut referans görsel kullanıldı.`, ...promptUpdates, ledger };
         const generated = await engine.generate({ prompt: imagePrompt(project, activeScene), aspectRatio: project.aspectRatio, seed: seedFor(`${scene.id}:${runId}`, step.attempts) });
@@ -340,17 +339,20 @@ export function createProductionWorker(options: WorkerOptions) {
     const image = resolveImageFile(scene.image, { publicDirectory: options.publicDirectory, mediaDirectory: mediaRoot });
     await access(image).catch(() => { throw new AppError(400, `${scene.title} için görsel dosyası bulunamadı.`); });
     const fallback = async (note: string, ledger: { status: "failed" | "released"; note: string }): Promise<StepResult> => {
-      if (paidOnly) throw new AppError(503, `${note} Ücretli video üretilemedi; üretim durduruldu.`);
       await cameraClip(project, scene, path.join(clipsDirectory(project.id), clipFile(scene.id, cameraClipKey(project, scene))));
       return { kind: "video", note, ledger };
     };
     const engine = options.videoEngine?.() ?? null;
     let activeScene = scene;
+    let promptUpdates: { promptEn?: string; promptEnSource?: string; motionPrompt?: string } = {};
     let requestId = paid.requestId;
     if (!requestId) {
       if (paid.submittedAt) return fallback("Önceki gönderimin sonucu belirsiz; çift ücret olmaması için yeniden gönderilmedi.", { status: "failed", note: "Gönderim sırasında bağlantı koptu; GMI'da iş oluşmuş ve ücretlendirilmiş olabilir. Konsoldan kontrol edin." });
       if (!engine || !spec) return fallback("GMI bağlantısı kullanılamadığı için ücretsiz kamera hareketi kullanıldı.", { status: "released", note: "İstek gönderilmedi; ayrılan tutar bütçeye döndü." });
       activeScene = await ensureSceneEnhanced(project, scene);
+      if (activeScene.promptEn && activeScene.promptEn !== scene.promptEn) {
+        promptUpdates = { promptEn: activeScene.promptEn, promptEnSource: activeScene.promptEnSource, ...(activeScene.motionPrompt !== scene.motionPrompt ? { motionPrompt: activeScene.motionPrompt } : {}) };
+      }
       const imageUrl = await engine.upload(await readFile(image), image.endsWith(".png") ? "png" : "jpg");
       if (!(await options.repository.markSubmitting(project.id, runId, step.id))) throw new AppError(409, "Üretim durdurulduğu için istek gönderilmedi.");
       const duration = spec.durations.find((value) => value >= activeScene.duration) ?? spec.durations[spec.durations.length - 1];
@@ -374,7 +376,7 @@ export function createProductionWorker(options: WorkerOptions) {
       catch (error) { if (!failure(error).retryable) throw error; }
       if (state?.state === "success") {
         // The paid clip is kept under its fingerprint, so later films reuse it instead of paying again.
-        const key = aiClipKey(project, scene);
+        const key = aiClipKey(project, activeScene);
         const file = clipFile(scene.id, key);
         const work = await mkdtemp(path.join(os.tmpdir(), "kadra-video-"));
         try {
@@ -385,6 +387,7 @@ export function createProductionWorker(options: WorkerOptions) {
         return {
           kind: "video", note: `${spec?.label ?? paid.model} ile üretildi.`, ledger: { status: "charged", note: `GMI isteği ${requestId} tamamlandı.` },
           clip: { sceneId: scene.id, key, file, model: paid.model, modelLabel: spec?.label ?? paid.model, cost: paid.unitCost },
+          ...promptUpdates,
         };
       }
       if (state?.state === "failed") return fallback(state.message, { status: "failed", note: `${state.message} Başarısız işlerin ücretlendirilip ücretlendirilmediğini konsoldan kontrol edin.` });
@@ -626,14 +629,13 @@ export function createProductionWorker(options: WorkerOptions) {
     if (step.kind === "clip") {
       const clip = await sceneClip(project, scene!);
       if (clip.source === "ai") return { kind: "clip", note: `Bu kareden daha önce üretilmiş yapay zekâ videosu (${clip.label}) kullanıldı; yeniden ücret ödenmedi.` };
-      if (paidOnly) throw new AppError(409, `${scene!.title}: ücretli video bulunamadı; çekim için yeni teklif gerekli.`);
       const rendered = await cameraClip(project, scene!, clip.file);
       return { kind: "clip", note: rendered ? `Kamera: ${cameraMove(scene!.camera).label.toLocaleLowerCase("tr")}.` : "Kare ve kamera hareketi değişmediği için önceki klip kullanıldı." };
     }
     if (step.kind === "title") {
       const clip = await sceneClip(project, scene!);
       if (await exists(clip.file)) return { kind: "title", note: "Yazı değişmediği için önceki kart kullanıldı." };
-      await renderOnce(clip.file, (output) => renderTitleClip({ text: titleCardText(scene!.description), output, duration: scene!.duration, aspectRatio: project.aspectRatio }));
+      await renderOnce(clip.file, (output) => renderTitleClip({ text: titleCardText(scene!.description), rawText: `${scene!.title} ${scene!.description} ${scene!.screenText}`, output, duration: scene!.duration, aspectRatio: project.aspectRatio }));
       return { kind: "title", note: "" };
     }
     const clips = await Promise.all(project.scenes.map(async (item) => (await sceneClip(project, item)).file));
@@ -673,9 +675,12 @@ export function createProductionWorker(options: WorkerOptions) {
     }
   }
 
+  const concurrency = Math.max(1, options.concurrency ?? 1);
+  const parallel = concurrency > 1;
+
   /** Runs at most one step. Returns false when no work was waiting. */
-  async function runNext(): Promise<boolean> {
-    const claim = await options.repository.claimStep(owner, LEASE_MS);
+  async function runNext(laneOwner = owner): Promise<boolean> {
+    const claim = await options.repository.claimStep(laneOwner, LEASE_MS, parallel);
     if (!claim) return false;
     const { project, runId, step } = claim;
     try {
@@ -691,25 +696,35 @@ export function createProductionWorker(options: WorkerOptions) {
   }
 
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let active = false;
+  const activeLanes = new Set<number>();
   let stopped = true;
-  async function loop() {
-    if (active || stopped) return;
-    active = true;
+  function loop() {
+    if (stopped) return;
     if (timer) { clearTimeout(timer); timer = null; }
-    try { while (!stopped && await runNext()) { /* Keep draining queued steps. */ } }
-    catch (error) { log(`Kadra üretim çalışanı: ${failure(error).message}`); }
-    finally {
-      active = false;
-      if (!stopped) timer = setTimeout(() => void loop(), IDLE_MS);
+    for (let lane = 0; lane < concurrency; lane += 1) {
+      if (activeLanes.has(lane)) continue;
+      activeLanes.add(lane);
+      const laneOwner = concurrency === 1 ? owner : `${owner}:${lane}`;
+      void (async () => {
+        try {
+          while (!stopped && await runNext(laneOwner)) { /* Keep draining queued steps on this lane. */ }
+        } catch (error) {
+          log(`Kadra üretim çalışanı: ${failure(error).message}`);
+        } finally {
+          activeLanes.delete(lane);
+          if (!stopped && activeLanes.size === 0 && !timer) {
+            timer = setTimeout(() => loop(), IDLE_MS);
+          }
+        }
+      })();
     }
   }
 
   return {
     owner,
     runNext,
-    start() { if (stopped) { stopped = false; void loop(); } },
-    wake() { if (!stopped) void loop(); },
+    start() { if (stopped) { stopped = false; loop(); } },
+    wake() { if (!stopped) loop(); },
     stop() { stopped = true; if (timer) clearTimeout(timer); timer = null; },
   };
 }

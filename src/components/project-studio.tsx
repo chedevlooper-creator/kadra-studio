@@ -7,7 +7,7 @@ import {
   LoaderCircle, MessageSquareText, Pencil, RotateCcw, Rows3, Search, Square, TriangleAlert, WandSparkles, X,
 } from "lucide-react";
 import { CAMERA_MOVES, EMOTIONS, GENRES, LOOKS, lookOf, PRESETS } from "@/lib/cinema";
-import { titleCardText } from "@/lib/text";
+import { titleCardStyle, titleCardText } from "@/lib/text";
 import type { AspectRatio, Project, ProviderStatus, Scene, VideoModelOption } from "@/lib/types";
 import AssistantPanel from "./assistant-panel";
 import { CsvExport, MusicDirector, VoiceoverStudio } from "./creative-tools";
@@ -99,22 +99,29 @@ export default function ProjectStudio({ project, providers, videoModels, onProje
   const shownScenes = scenes.filter((scene) => (!sceneGroup || scene.group === sceneGroup) && `${scene.code} ${scene.title} ${scene.description} ${scene.prompt}`.toLocaleLowerCase("tr").includes(sceneQuery.toLocaleLowerCase("tr")));
   const activeStep = project.run?.steps.find((item) => item.status === "running");
 
-  useEffect(() => { changeRef.current = onProjectChange; notifyRef.current = notify; }, [onProjectChange, notify]);
+  const latestRef = useRef({ revision: project.revision, updatedAt: project.updatedAt });
+  useEffect(() => {
+    changeRef.current = onProjectChange;
+    notifyRef.current = notify;
+    latestRef.current = { revision: project.revision, updatedAt: project.updatedAt };
+  }, [onProjectChange, notify, project.revision, project.updatedAt]);
 
   useEffect(() => {
-    if (!running) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     let reportedError = false;
     const controller = new AbortController();
+    const intervalMs = running ? 1000 : 3500;
     async function poll() {
       try {
         const response = await fetch(`/api/projects/${project.id}`, { cache: "no-store", signal: controller.signal });
         const result = await response.json() as { project?: Project; error?: string };
         if (!response.ok || !result.project) throw new Error(result.error || "Üretim durumu alınamadı.");
         if (stopped) return;
-        changeRef.current(result.project);
-        if (result.project.run?.status !== "running") {
+        if (running || result.project.revision !== latestRef.current.revision || result.project.updatedAt !== latestRef.current.updatedAt || result.project.run?.status === "running") {
+          changeRef.current(result.project);
+        }
+        if (running && result.project.run?.status !== "running") {
           if (result.project.run?.status === "completed") notifyRef.current(result.project.run.mode === "characters" ? "Oyuncular hazır; onayını bekliyor." : result.project.output ? "Filmin hazır." : "Üretim tamamlandı.");
           if (result.project.run?.status === "failed") notifyRef.current("Üretim durdu. Sebebi Film adımındaki kayıtta.");
           return;
@@ -122,12 +129,12 @@ export default function ProjectStudio({ project, providers, videoModels, onProje
         reportedError = false;
       } catch (cause) {
         if (stopped) return;
-        if (!reportedError) notifyRef.current(cause instanceof Error ? cause.message : "Bağlantı yeniden deneniyor.");
+        if (running && !reportedError) notifyRef.current(cause instanceof Error ? cause.message : "Bağlantı yeniden deneniyor.");
         reportedError = true;
       }
-      if (!stopped) timer = setTimeout(poll, 1000);
+      if (!stopped) timer = setTimeout(poll, intervalMs);
     }
-    timer = setTimeout(poll, 700);
+    timer = setTimeout(poll, running ? 700 : 2500);
     return () => { stopped = true; controller.abort(); clearTimeout(timer); };
   }, [project.id, running]);
 
@@ -266,7 +273,7 @@ export default function ProjectStudio({ project, providers, videoModels, onProje
           {sceneView === "grid" ? <div className="frames">{shownScenes.map((scene) => <SceneCard key={scene.id} scene={scene} index={scene.order - 1} characters={project.characters} disabled={isDisabled} canRepair={providers.gmi} onEdit={() => setEditingScene({ ...scene })} onRepair={() => setRepairTarget({ kind: "scene", scene })} onRevert={() => revertRepair(scene)} />)}</div>
             : selectedScene ? <div className="sequence">
               <div className="viewer">
-                <div className="viewer-media" style={{ aspectRatio: project.aspectRatio.replace(":", " / ") }}>{selectedScene.kind === "title" ? <div className="title-card"><p>{titleCardText(selectedScene.description) || selectedScene.title}</p></div> : <Image src={selectedScene.image || "/images/mountains.jpg"} alt={`${selectedScene.title} karesi`} fill sizes="(max-width: 900px) 100vw, 760px" unoptimized />}</div>
+                <div className="viewer-media" style={{ aspectRatio: project.aspectRatio.replace(":", " / ") }}>{selectedScene.kind === "title" ? <div className="title-card" style={titleCardStyle(selectedScene.description, `${selectedScene.title} ${selectedScene.screenText}`).isRed ? { backgroundColor: "#000000", color: "#e52222" } : undefined}><p>{titleCardText(selectedScene.description) || selectedScene.title}</p></div> : <Image src={selectedScene.image || "/images/mountains.jpg"} alt={`${selectedScene.title} karesi`} fill sizes="(max-width: 900px) 100vw, 760px" unoptimized />}</div>
                 <div className="viewer-bar"><strong>{(scenes.indexOf(selectedScene) + 1).toString().padStart(2, "0")} {selectedScene.title}</strong><span className="viewer-tools"><button type="button" className="icon-button" aria-label="Öne al" disabled={isDisabled || scenes[0].id === selectedScene.id} onClick={() => moveScene(selectedScene, -1)}><ArrowUp size={16} /></button><button type="button" className="icon-button" aria-label="Sona al" disabled={isDisabled || scenes.at(-1)!.id === selectedScene.id} onClick={() => moveScene(selectedScene, 1)}><ArrowDown size={16} /></button><button type="button" className="button button-small" disabled={isDisabled} onClick={() => setEditingScene({ ...selectedScene })}><Pencil size={14} />Düzenle</button></span></div>
                 <p className="viewer-text">{selectedScene.description}</p>
                 {selectedScene.narration ? <p className="viewer-voice">“{selectedScene.narration}”</p> : null}
@@ -381,7 +388,7 @@ function SceneCard({ scene, index, disabled, onEdit, characters, canRepair, onRe
   const cast = characters.filter((character) => scene.characterIds.includes(character.id));
   return <article className={`frame is-${scene.status}`}>
     <button className="frame-media" type="button" onClick={onEdit} disabled={disabled} aria-label={`${scene.title} sahnesini düzenle`}>
-      {scene.kind === "title" ? <span className="title-card"><span>{titleCardText(scene.description) || scene.title}</span></span> : <Image src={scene.image || "/images/mountains.jpg"} alt="" fill sizes="(max-width: 650px) 100vw, (max-width: 1100px) 45vw, 30vw" unoptimized className={scene.imageSource === "generated" ? "" : "is-placeholder"} />}
+      {scene.kind === "title" ? <span className="title-card" style={titleCardStyle(scene.description, `${scene.title} ${scene.screenText}`).isRed ? { backgroundColor: "#000000", color: "#e52222" } : undefined}><span>{titleCardText(scene.description) || scene.title}</span></span> : <Image src={scene.image || "/images/mountains.jpg"} alt="" fill sizes="(max-width: 650px) 100vw, (max-width: 1100px) 45vw, 30vw" unoptimized className={scene.imageSource === "generated" ? "" : "is-placeholder"} />}
       {issues.map((box, number) => <span key={number} className="issue-box" style={{ left: `${box[0] * 100}%`, top: `${box[1] * 100}%`, width: `${(box[2] - box[0]) * 100}%`, height: `${(box[3] - box[1]) * 100}%` }} />)}
       <span className="frame-code">{scene.code || (index + 1).toString().padStart(2, "0")}</span>
       <span className="frame-time">{scene.duration} sn</span>

@@ -9,7 +9,8 @@ import { ASSISTANT_SCENE_FIELDS, assistantInstructions, parseAssistantReply } fr
 import { approvedCharacterSheets, continuityFrame, frameIsCurrent, frameKeys, keptClips, REPAIR_LABEL, REPAIR_MODEL, reusableClip } from "./production/reuse";
 import { voiceFile, voiceKey } from "./production/narration";
 import { chooseFrameModel, frameModel } from "./routing/frame-router";
-import { DEFAULT_NARRATION, narrationText, VOICE_LABEL, VOICE_MODEL } from "./voices";
+import { DEFAULT_NARRATION, LOCAL_VOICE, narrationText, VOICE_LABEL, VOICE_MODEL } from "./voices";
+import { balonlarMasterTemplate, isBalonlarScript } from "./templates/balonlar-master";
 import { mentionsCharacter, modelCatalog, newCharacter, parseScript, planScenes, scenesFromAiPlan, scenesFromStoryboard, scriptFromStoryboard, TITLE_MODEL, VIDEO_MODEL, type StoryboardShot } from "./planner";
 import type { EnhancedShot, PromptEnhanceRequest } from "./providers/deepseek";
 import type { AiPlan, PlanRequest } from "./providers/nvidia";
@@ -99,7 +100,7 @@ type LedgerUpdate = { status: "charged" | "failed" | "released"; note: string };
 export type StepResult =
   | { kind: "image"; url: string; source: ImageSource; review: ImageReview | null; note: string; frameKey?: string; frameModel?: string; promptEn?: string; promptEnSource?: string; motionPrompt?: string; ledger?: LedgerUpdate }
   | { kind: "clip" | "title"; note: string }
-  | { kind: "video"; note: string; ledger: LedgerUpdate; clip?: Omit<ClipRecord, "createdAt"> }
+  | { kind: "video"; note: string; ledger: LedgerUpdate; clip?: Omit<ClipRecord, "createdAt">; promptEn?: string; promptEnSource?: string; motionPrompt?: string }
   | { kind: "montage"; url: string; duration: number; note: string }
   | { kind: "character"; note: string; uncertain: boolean; failedSubmissions: number }
   | { kind: "repair"; url: string | null; review: ImageReview | null; verdict: SheetVerdict | null; note: string; cost: number; ledger: LedgerUpdate }
@@ -612,7 +613,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
     Object.assign(scene, patch);
     // A feeling only belongs to a person who is in this shot.
     scene.emotions = Object.fromEntries(Object.entries(scene.emotions ?? {}).filter(([who, feeling]) => feeling && scene.characterIds.includes(who) && project.characters.find((character) => character.id === who)?.kind !== "place"));
-    if (changed) { scene.promptEn = ""; scene.promptEnSource = ""; }
+    if (changed) { scene.promptEn = ""; scene.promptEnSource = ""; if (patch.motionPrompt === undefined) scene.motionPrompt = ""; }
     if (patch.kind || scene.model === VIDEO_MODEL || LEGACY_VIDEO_MODELS.includes(scene.model) || scene.model === "FFmpeg yazı kartı") { scene.model = (patch.kind ?? scene.kind) === "title" ? TITLE_MODEL : VIDEO_MODEL; }
     if (changed && scene.imageSource === "generated") { scene.imageSource = "reference"; scene.review = null; scene.repair = null; }
     return changed;
@@ -672,9 +673,27 @@ export function createProjectRepository(directory: string, options: RepositoryOp
         return { script: project.script, style: project.style, aspectRatio: project.aspectRatio, genre: project.genre, brief: project.brief, cover: project.cover };
       });
       const status = await providers();
-      const useAi = mode === "auto" && Boolean(options.aiPlanner) && Boolean(status.deepseek || status.nvidia);
+      const useMasterTemplate = isBalonlarScript(snapshot.script);
+      const useAi = !useMasterTemplate && mode === "auto" && Boolean(options.aiPlanner) && Boolean(status.deepseek || status.nvidia);
       let plan: Pick<Project, "planner" | "planNote" | "characters" | "scenes">;
-      if (useAi) {
+      if (useMasterTemplate) {
+        const master = balonlarMasterTemplate(snapshot.aspectRatio);
+        const scenes = scenesFromStoryboard(master.shots, snapshot.cover);
+        const characters = master.characters.map((item, index) => characterSchema.parse(newCharacter(`c${index + 1}`, item.name, item.appearance, item.aliases, item.style)));
+        scenes.forEach((scene) => {
+          scene.characterIds = characters.filter((character) => mentionsCharacter(scene, character)).map((character) => character.id);
+          if (scene.kind === "video") {
+            scene.promptEn = scene.prompt;
+            scene.promptEnSource = scene.prompt;
+          }
+        });
+        plan = {
+          planner: "import",
+          planNote: "Balonlar ve Dağlar tam senaryosu (32 çekim, 12 karakter, 4 kırmızı-siyah 'David and Goliath' ara kartı ve 2 seslendirmeli daktilo kamu spotu) tek seferde hatasız üretim için yüklendi.",
+          characters,
+          scenes,
+        };
+      } else if (useAi) {
         try {
           const result = scenesFromAiPlan(await options.aiPlanner!({ script: snapshot.script, style: snapshot.style, aspectRatio: snapshot.aspectRatio, genre: snapshot.genre, brief: snapshot.brief }), snapshot.cover);
           plan = { planner: status.deepseek ? "deepseek" : "nemotron", planNote: "", ...result };
@@ -693,6 +712,12 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       return transaction((database) => {
         const project = find(database, id); checkRevision(project, revision); requireIdle(project);
         Object.assign(project, plan);
+        if (useMasterTemplate) {
+          const master = balonlarMasterTemplate(project.aspectRatio);
+          if (!project.genre) project.genre = master.genre;
+          if (!project.brief) project.brief = master.brief;
+          if (project.narration.engine === "off") project.narration = { engine: "local", voice: LOCAL_VOICE, speed: 1, volume: 1 };
+        }
         if (paidOnly) project.scenes.forEach((scene) => { if (scene.kind === "video") scene.motion = "ai"; });
         project.duration = project.scenes.reduce((sum, scene) => sum + scene.duration, 0); project.status = "planned"; project.run = null;
         touch(project, new Date().toISOString()); return publicProject(project);
@@ -877,15 +902,42 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       pushEvent(project.run, "Üretim durduruldu. Tamamlanan görseller projede kaldı; film birleştirilmedi. Gönderilmemiş ücretli istekler için ayrılan tutar bütçeye döndü.", "warning");
       touch(project, now); return publicProject(project);
     }),
-    /** Claims the next step of any active run. Steps run in order; an expired or orphaned lease is taken over. */
-    claimStep: (owner: string, leaseMs: number): Promise<{ project: Project; runId: string; step: RunStep } | null> => transaction((database) => {
+    /** Claims the next step of any active run. Steps run in order; when `parallel` is true, independent steps within the current stage run concurrently. */
+    claimStep: (owner: string, leaseMs: number, parallel = false): Promise<{ project: Project; runId: string; step: RunStep } | null> => transaction((database) => {
       const now = Date.now();
       for (const project of database.projects) {
         const run = project.run;
         if (!run || run.status !== "running") continue;
-        const step = run.steps.find((item) => item.status === "pending" || item.status === "running");
+        const canClaim = (item: StoredStep): boolean => {
+          if (item.status !== "pending" && item.status !== "running") return false;
+          if (item.status === "running" && (item.owner === owner || (item.leaseUntil && Date.parse(item.leaseUntil) > now && ownerAlive(item.owner)))) return false;
+          if (!parallel) return true;
+          if (item.kind === "montage") {
+            return run.steps.every((other) => other.id === item.id || other.status === "done");
+          }
+          const hasIncompleteChar = run.steps.some((other) => other.kind === "character" && other.status !== "done");
+          if (hasIncompleteChar && item.kind !== "character") return false;
+          if (item.kind === "video" || item.kind === "clip") {
+            const sceneImage = run.steps.find((other) => other.kind === "image" && other.sceneId === item.sceneId);
+            if (sceneImage && sceneImage.status !== "done") return false;
+          }
+          if (item.kind === "image" && item.sceneId) {
+            const scene = project.scenes.find((s) => s.id === item.sceneId);
+            const hasPlace = scene && project.characters.some((c) => c.kind === "place" && scene.characterIds.includes(c.id));
+            if (hasPlace) {
+              const idx = run.steps.indexOf(item);
+              if (run.steps.slice(0, idx).some((other) => other.kind === "image" && other.status !== "done")) return false;
+            }
+          }
+          return true;
+        };
+        const step = parallel
+          ? run.steps.find(canClaim)
+          : (() => {
+            const first = run.steps.find((item) => item.status === "pending" || item.status === "running");
+            return first && canClaim(first) ? first : null;
+          })();
         if (!step) continue;
-        if (step.status === "running" && (step.owner === owner || (step.leaseUntil && Date.parse(step.leaseUntil) > now && ownerAlive(step.owner)))) continue;
         const scene = project.scenes.find((item) => item.id === step.sceneId);
         if (step.attempts >= MAX_ATTEMPTS) {
           step.status = "failed"; if (scene) scene.status = "failed";
@@ -924,6 +976,9 @@ export function createProjectRepository(directory: string, options: RepositoryOp
         pushEvent(run, `${scene.title}: ${result.kind === "title" ? "yazı kartı" : "klip"} hazır.${result.note ? ` ${result.note}` : ""}`, "success");
       } else if (result.kind === "video" && scene) {
         scene.status = "ready";
+        if (result.promptEn !== undefined) scene.promptEn = result.promptEn.slice(0, 4_000);
+        if (result.promptEnSource !== undefined) scene.promptEnSource = result.promptEnSource;
+        if (result.motionPrompt) scene.motionPrompt = result.motionPrompt;
         const entry = ledgerEntry(project, step.paid?.ledgerId);
         if (entry) { entry.status = result.ledger.status; entry.note = result.ledger.note.slice(0, 500); entry.at = now; }
         const clip = result.clip;
@@ -1045,7 +1100,16 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       project.scenes = scenesFromStoryboard(input.shots, project.cover);
       project.characters = (input.characters ?? []).map((item, index) => characterSchema.parse(newCharacter(`c${index + 1}`, item.name, item.appearance, item.aliases, item.style)));
       if (project.characters.length > 12) throw new AppError(400, "En fazla 12 karakter olabilir.");
-      project.scenes.forEach((scene) => { scene.characterIds = project.characters.filter((character) => mentionsCharacter(scene, character)).map((character) => character.id); });
+      project.scenes.forEach((scene) => {
+        scene.characterIds = project.characters.filter((character) => mentionsCharacter(scene, character)).map((character) => character.id);
+        if (input.title.includes("Tam Senaryo") && scene.kind === "video") {
+          scene.promptEn = scene.prompt;
+          scene.promptEnSource = scene.prompt;
+        }
+      });
+      if (project.scenes.some((scene) => Boolean(scene.narration.trim())) && project.narration.engine === "off") {
+        project.narration = { engine: "local", voice: LOCAL_VOICE, speed: 1, volume: 1 };
+      }
       project.planner = "import";
       project.planNote = "";
       if (paidOnly) project.scenes.forEach((scene) => { if (scene.kind === "video") scene.motion = "ai"; });
@@ -1079,9 +1143,11 @@ export function createProjectRepository(directory: string, options: RepositoryOp
     }),
     /** Edits keep existing shot links and add new ones for new aliases; an approved sheet stays approved until the user regenerates it. */
     updateCharacter: (id: string, revision: number, characterId: string, input: Partial<CharacterInput>): Promise<Project> => transaction((database) => {
-      const project = find(database, id); checkRevision(project, revision); requireIdle(project);
+      parseInput(revisionSchema, revision);
+      const project = find(database, id);
       const character = project.characters.find((item) => item.id === characterId);
       if (!character) throw new AppError(404, "Karakter bulunamadı.");
+      if (character.sheet.status === "producing") throw new AppError(409, "Bu karakter sayfası şu an üretiliyor; tamamlanmasını bekleyin.");
       const looksChanged = (input.appearance !== undefined && input.appearance.trim() !== character.appearance) || (input.style !== undefined && input.style.trim() !== character.style) || (input.framing !== undefined && input.framing !== character.framing);
       if (input.framing !== undefined) character.framing = input.framing;
       if (input.name !== undefined) character.name = input.name.trim();
@@ -1090,8 +1156,14 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       if (input.aliases !== undefined) character.aliases = input.aliases.map((alias) => alias.trim()).filter(Boolean).slice(0, 12);
       if (looksChanged && character.sheet.status === "approved") character.sheet.note = "Tarif değişti; karakter sayfasını yeniden üretmek isteyebilirsin.";
       project.scenes.forEach((scene) => { if (mentionsCharacter(scene, character) && !scene.characterIds.includes(character.id)) scene.characterIds.push(character.id); });
-      project.quote = null;
-      touch(project, new Date().toISOString()); return publicProject(project);
+      const now = new Date().toISOString();
+      if (project.run?.status === "running") {
+        project.updatedAt = now;
+      } else {
+        project.quote = null;
+        touch(project, now);
+      }
+      return publicProject(project);
     }),
     /** Returns the media files that belonged only to the removed character, for the caller to delete. */
     deleteCharacter: (id: string, revision: number, characterId: string): Promise<{ project: Project; files: string[] }> => transaction((database) => {
@@ -1105,13 +1177,20 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       return { project: publicProject(project), files: [...(character.reference ? [character.reference.file] : []), ...character.sheet.attempts.map((attempt) => attempt.url.split("/").pop()!)] };
     }),
     setCharacterReference: (id: string, revision: number, characterId: string, reference: ReferencePhoto | null): Promise<{ project: Project; previous: string | null }> => transaction((database) => {
-      const project = find(database, id); checkRevision(project, revision); requireIdle(project);
+      parseInput(revisionSchema, revision);
+      const project = find(database, id);
       const character = project.characters.find((item) => item.id === characterId);
       if (!character) throw new AppError(404, "Karakter bulunamadı.");
+      if (character.sheet.status === "producing") throw new AppError(409, "Bu karakter sayfası şu an üretiliyor; tamamlanmasını bekleyin.");
       const previous = character.reference?.file ?? null;
       character.reference = reference;
-      project.quote = null;
-      touch(project, new Date().toISOString());
+      const now = new Date().toISOString();
+      if (project.run?.status === "running") {
+        project.updatedAt = now;
+      } else {
+        project.quote = null;
+        touch(project, now);
+      }
       return { project: publicProject(project), previous: previous !== reference?.file ? previous : null };
     }),
     /** Prices a character run without starting it. */
@@ -1183,18 +1262,26 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       return true;
     }),
     reviewCharacterSheet: (id: string, revision: number, characterId: string, action: "approve" | "reject", attemptId: string | null): Promise<Project> => transaction((database) => {
-      const project = find(database, id); checkRevision(project, revision); requireIdle(project);
+      parseInput(revisionSchema, revision);
+      const project = find(database, id);
       const character = project.characters.find((item) => item.id === characterId);
       if (!character) throw new AppError(404, "Karakter bulunamadı.");
+      if (character.sheet.status === "producing") throw new AppError(409, "Bu karakter sayfası şu an üretiliyor; tamamlanmasını bekleyin.");
       if (action === "approve") {
-        const attempt = character.sheet.attempts.find((item) => item.id === (attemptId ?? character.sheet.chosen));
+        const attempt = character.sheet.attempts.find((item) => item.id === (attemptId ?? character.sheet.chosen)) ?? character.sheet.attempts.at(-1);
         if (!attempt) throw new AppError(400, "Onaylanacak bir karakter sayfası yok.");
         character.sheet.chosen = attempt.id; character.sheet.status = "approved"; character.sheet.note = "";
       } else {
         character.sheet.status = "none"; character.sheet.note = "Reddedildi; tarifi veya fotoğrafı değiştirip yeniden üretebilirsin.";
       }
-      project.quote = null;
-      touch(project, new Date().toISOString()); return publicProject(project);
+      const now = new Date().toISOString();
+      if (project.run?.status === "running") {
+        project.updatedAt = now;
+      } else {
+        project.quote = null;
+        touch(project, now);
+      }
+      return publicProject(project);
     }),
     /** Prices one region repair against the project's remaining budget, without starting it. */
     estimateRepair: async (id: string): Promise<RepairEstimate> => {
@@ -1345,7 +1432,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
     /** Long provider jobs keep their lease while the worker that owns them is alive. */
     extendLease: (projectId: string, runId: string, stepId: string, owner: string, leaseMs: number): Promise<boolean> => transaction((database) => {
       const active = activeStep(database, projectId, runId, stepId);
-      if (!active || active.step.owner !== owner) return false;
+      if (!active || (active.step.owner !== owner && !active.step.owner?.startsWith(`${owner}:`))) return false;
       active.step.leaseUntil = new Date(Date.now() + leaseMs).toISOString();
       return true;
     }),

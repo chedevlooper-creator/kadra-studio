@@ -36,8 +36,8 @@ export function cameraMove(camera: string): CameraMove {
   if (/uzaklaş|geri çekil|zoom out|pull back|dolly out|pull out/.test(value)) return pick("out");
   if (/sağa|pan right|\bright\b/.test(value)) return pick("right");
   if (/sola|pan left|\bleft\b/.test(value)) return pick("left");
-  if (/yukarı|yüksel|tilt up|crane up|\brise/.test(value)) return pick("up");
-  if (/aşağı|alçal|tilt down|crane down|\bdown\b/.test(value)) return pick("down");
+  if (/yukarı|yüksel|vinç\s*kalk|tilt up|crane up|\brise/.test(value)) return pick("up");
+  if (/aşağı|alçal|vinç\s*in|tilt down|crane down|\bdown\b/.test(value)) return pick("down");
   if (/sabit|static|\bstill\b|durağan/.test(value)) return pick("still");
   return pick("in");
 }

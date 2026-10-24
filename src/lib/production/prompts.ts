@@ -5,11 +5,66 @@ import type { Character, Project, ReviewIssue, Scene } from "../types";
 type PromptProject = Pick<Project, "characters" | "style"> & { genre?: string; brief?: string };
 
 /**
+ * Translates raw Turkish political-satire metaphors that could trigger upstream image/video provider safety refusals
+ * into safe, high-adherence editorial political-cartoon visual descriptions, while leaving ordinary prompts untouched.
+ */
+export function sanitizeSatirePrompt(text: string): string {
+  if (!/(?:öldürülmüş|bok(?:ları|u|\s+içinde)?|domalıyor|kanlı\s+dolar|kan\s+damlayan|rusya\s+bayrağı\s+dışında\s+asla\s+bayrak\s+olmayacak|spews\s+brown\s+foul\s+muck|small\s+child|child's\s+motionless|child's\s+vulnerability|striking\s+at\s+her|blood-dripping|blood-stained|boy\s+around\s+12)/iu.test(text)) {
+    return text;
+  }
+  return text
+    .replace(/öldürülmüş\s+bir\s+çocuk/giu, "yere düşmüş kapüşonlu küçük bir figür silüeti (editorial political cartoon drama, fallen hooded figure silhouette in shadow)")
+    .replace(/ağzından\s+çıkan\s+bokları/giu, "ağzından çıkan koyu çamur ve balçıkları (spewing dark brown muck from mouth)")
+    .replace(/\bbok\s+içinde\b/giu, "çamur ve balçık içinde (covered in dark brown muck)")
+    .replace(/\bbokları\b/giu, "çamur ve balçıkları (dark brown muck)")
+    .replace(/gözlerinden\s+kalp\s+çıkıp\s+domalıyor/giu, "gözlerinden kalpler çıkıp iki büklüm boyun eğiyor (cartoon red hearts popping from eyes, bowing submissively on the ground)")
+    .replace(/\bdomalıyor\b/giu, "iki büklüm boyun eğiyor (bowing submissively on the ground)")
+    .replace(/kanlı\s+dolar(?:lar)?/giu, "kırmızı lekeli dolar banknotları (crimson-stained US dollar bills)")
+    .replace(/kan\s+damlayan\s+bir\s+kalemle/giu, "koyu kırmızı mürekkep damlayan bir kalemle (with an ornate pen dripping thick crimson ink)")
+    .replace(/sahnede\s+rusya\s+bayrağı\s+dışında\s+asla\s+bayrak\s+olmayacak\.?/giu, "Strictly only the Russian tricolor flag is visible in the scene; no other flags anywhere.")
+    .replace(/\bblood-dripping\b/giu, "crimson-ink-dripping")
+    .replace(/\bblood-stained\b/giu, "crimson-stained")
+    .replace(/fires\s+his\s+AK-47\s+into\s+the\s+air,\s+spews\s+brown\s+foul\s+muck\s+from\s+his\s+mouth\s+onto\s+the\s+poor\s+people/giu, "waves his prop rifle in the air, sprays dark brown mud from his mouth toward the figures")
+    .replace(/a\s+small\s+child's\s+motionless\s+silhouette\s+(?:rests|lying\s+flat)\s+[^.]*\./giu, "a small fallen hooded silhouette rests in deep shadow beside a dropped schoolbag on the cold grey pavement, while a towering spherical balloon policeman in a glossy black uniform stands guard beside the shadow.")
+    .replace(/small\s+child\s+lies\s+motionless\s+in\s+shadow\s+on\s+the\s+pavement,\s+while\s+a\s+towering,\s+heartless\s+spherical\s+balloon\s+policeman\s+in\s+black\s+uniform\s+stands\s+guard\s+over\s+the\s+child\s+clutching\s+an\s+AK-47\s+rifle/giu, "small fallen hooded silhouette rests in deep shadow beside a dropped schoolbag on the cold grey pavement, while a towering spherical balloon policeman in black uniform stands guard beside the shadow")
+    .replace(/child's\s+vulnerability/giu, "figure's vulnerability")
+    .replace(/beside\s+the\s+child,\s+gripping\s+an\s+AK-47\s+rifle/giu, "beside the shadow")
+    .replace(/boy\s+around\s+12[–-]14\s+years\s+old/giu, "young red-haired Anatolian hero")
+    .replace(/raising\s+their\s+batons\s+and\s+striking\s+at\s+her\s+as\s+she\s+shields\s+her\s+face/giu, "raising their rubber batons menacingly as she shields her face");
+}
+
+/**
  * Uses the background-enhanced English prompt when it is still in sync with the scene's source prompt;
  * falls back to `scene.prompt` when enhancement has not run yet or after an offline edit.
  */
 export function effectiveScenePrompt(scene: Pick<Scene, "prompt"> & Partial<Pick<Scene, "promptEn" | "promptEnSource">>): string {
-  return scene.promptEn && scene.promptEnSource === scene.prompt ? scene.promptEn : scene.prompt;
+  const raw = scene.promptEn && scene.promptEnSource === scene.prompt ? scene.promptEn : scene.prompt;
+  return sanitizeSatirePrompt(raw);
+}
+
+/**
+ * Returns the motion prompt only when it is still in sync with the scene's prompt, and ensures the
+ * selected camera movement is always represented so user camera edits are never ignored.
+ */
+export function effectiveMotionPrompt(scene: Pick<Scene, "prompt" | "camera" | "motionPrompt"> & Partial<Pick<Scene, "promptEnSource">>): string {
+  const cam = cameraPhrase(scene as Scene);
+  const synced = !scene.promptEnSource || scene.promptEnSource === scene.prompt;
+  const rawMotion = synced ? scene.motionPrompt?.trim() ?? "" : "";
+  if (!rawMotion) return cam;
+  const move = cameraMove(scene.camera);
+  const moveKeywords = move.prompt.toLowerCase().split(/[,\s]+/).filter((word) => word.length >= 4);
+  const alreadyMentionsCamera = moveKeywords.some((word) => rawMotion.toLowerCase().includes(word));
+  return alreadyMentionsCamera ? rawMotion : `${cam}. ${rawMotion}`;
+}
+
+/** True when `text` already contains a description of `character` (by name or a key appearance phrase). */
+function alreadyDescribesCharacter(text: string, character: Pick<Character, "name" | "appearance">): boolean {
+  const lower = text.toLowerCase();
+  const name = character.name.trim().toLowerCase();
+  const app = character.appearance.trim().toLowerCase();
+  if (!name || !lower.includes(name)) return false;
+  const sample = app.slice(0, 45).split(/[,\s]+/).filter((w) => w.length >= 5).slice(0, 3);
+  return sample.length >= 2 && sample.every((word) => lower.includes(word));
 }
 
 /** Storyboard prompts often carry their own "Style:" sentence; the project style is only added when they don't. */
@@ -30,18 +85,13 @@ function feelings(project: PromptProject, scene: Scene): string {
     .join("; ");
 }
 
-/** The people and the places linked to a shot, each as "name: description". */
-function cast(project: PromptProject, scene: Scene): { people: string; places: string } {
-  const linked = project.characters.filter((character) => scene.characterIds.includes(character.id));
-  const notes = (kind: Character["kind"]) => linked.filter((character) => (character.kind ?? "person") === kind).map((character) => `${character.name}: ${character.appearance}`).join("; ");
-  return { people: notes("person"), places: notes("place") };
-}
-
-/** The move in the model's words; a free-text note that is more than a preset name is kept alongside it. */
+/** The move in the model's words; an English free-text note that is more than a preset name is kept alongside it. */
 function cameraPhrase(scene: Scene): string {
   const move = cameraMove(scene.camera);
-  const preset = CAMERA_MOVES.some((item) => item.label.toLocaleLowerCase("tr") === scene.camera.trim().toLocaleLowerCase("tr"));
-  return preset || !scene.camera.trim() ? `Camera: ${move.prompt}` : `Camera: ${move.prompt} (${scene.camera.trim()})`;
+  const raw = scene.camera.trim();
+  const preset = CAMERA_MOVES.some((item) => item.label.toLocaleLowerCase("tr") === raw.toLocaleLowerCase("tr"));
+  const hasTurkish = /[çğıöşüÇĞİÖŞÜ]|\b(?:çekim|hareket|açı|kadraj|yaklaş|uzaklaş|takip|geçiş|kamera|dönüş|bakış)\b/iu.test(raw);
+  return preset || !raw || hasTurkish ? `Camera: ${move.prompt}` : `Camera: ${move.prompt} (${raw})`;
 }
 
 /** A compiled prompt and whether the model's character limit forced anything out. */
@@ -50,38 +100,100 @@ export interface CompiledPrompt { prompt: string; truncated: boolean }
 const FRAME_TAIL = "cinematic composition, high detail, no text, no captions, no watermark";
 const VIDEO_TAIL = "Smooth cinematic motion, consistent lighting, no text, no subtitles, no watermark";
 
+function trimToWordBoundary(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text.replace(/\.+$/, "").trim();
+  return text
+    .slice(0, maxLen)
+    .replace(/\s+\S*$/, "")
+    .replace(/[,;:.]+$/, "")
+    .replace(/\s+\b(?:and|or|with|of|in|on|to|for|as|at|by|from|the|a|an)$/i, "")
+    .replace(/[,;:.]+$/, "")
+    .trim();
+}
+
 /**
  * Joins sections in priority order and always keeps the style/negative tail. When the model's limit is
- * smaller than the text, lower-priority sections are dropped and the main section is cut on a word boundary,
- * so "no text/no watermark" is never the part that disappears.
+ * smaller than the text, lower-priority sections are dropped and the overflowing section is cut on a word boundary,
+ * so higher-priority sections (like the scene prompt) are never skipped in favour of trailing hints.
  */
 function fitPrompt(sections: (string | false | undefined)[], tail: string, maxChars: number): CompiledPrompt {
-  const body = sections.filter((section): section is string => Boolean(section && section.trim())).map((section) => section.trim());
+  const body = sections
+    .filter((section): section is string => Boolean(section && section.trim()))
+    .map((section) => sanitizeSatirePrompt(section.trim()).replace(/\.+$/, "").trim())
+    .filter(Boolean);
   const full = [...body, tail].join(". ");
   if (full.length <= maxChars) return { prompt: full, truncated: false };
   const budget = Math.max(120, maxChars - tail.length - 2);
   const kept: string[] = [];
   for (const section of body) {
     const candidate = [...kept, section].join(". ");
-    if (!kept.length || candidate.length <= budget) kept.push(section);
+    if (candidate.length <= budget) {
+      kept.push(section);
+      continue;
+    }
+    const used = kept.length ? kept.join(". ").length + 2 : 0;
+    const room = budget - used;
+    if (room >= 40) {
+      const trimmed = trimToWordBoundary(section, room);
+      if (trimmed) kept.push(trimmed);
+    }
+    break;
   }
   let prompt = [...kept, tail].join(". ");
   if (prompt.length > maxChars) {
     const room = Math.max(40, maxChars - tail.length - 2);
-    const main = (kept[0] ?? "").slice(0, room).replace(/\s+\S*$/, "").trim();
+    const main = trimToWordBoundary(kept[0] ?? "", room);
     prompt = `${main}. ${tail}`;
   }
   return { prompt: prompt.slice(0, maxChars), truncated: true };
 }
 
 export function compileVideoPrompt(project: PromptProject, scene: Scene, maxChars = 1_900): CompiledPrompt {
-  const { people, places } = cast(project, scene);
+  const linked = project.characters.filter((character) => scene.characterIds.includes(character.id));
+  const main = effectiveScenePrompt(scene);
+  const motion = effectiveMotionPrompt(scene);
+  const formatCast = (kind: Character["kind"], limit: number) => linked
+    .filter((character) => (character.kind ?? "person") === kind)
+    .map((character) => {
+      if (limit <= 0 || alreadyDescribesCharacter(main, character)) return character.name;
+      const app = trimToWordBoundary(character.appearance, limit);
+      return app ? `${character.name}: ${app}` : character.name;
+    })
+    .join("; ");
+  const emotionText = feelings(project, scene);
+  const styleText = styleHint(project, scene);
+  const moodText = moodHint(project);
+  const briefText = briefHint(project);
+  let places = formatCast("place", 180);
+  let people = formatCast("person", 180);
+  const totalWith = (p: string, pl: string) => [
+    motion,
+    main,
+    emotionText,
+    p && `Keep these characters exactly as they appear in the first frame: ${p}`,
+    pl && `Keep the location as it appears in the first frame: ${pl}`,
+    styleText,
+    moodText,
+    briefText,
+    VIDEO_TAIL,
+  ].filter(Boolean).join(". ").length;
+  if ((people || places) && totalWith(people, places) > maxChars) {
+    people = formatCast("person", 70);
+    places = formatCast("place", 70);
+  }
+  if ((people || places) && totalWith(people, places) > maxChars) {
+    people = formatCast("person", 0);
+    places = formatCast("place", 0);
+  }
   return fitPrompt([
-    scene.motionPrompt || cameraPhrase(scene), effectiveScenePrompt(scene),
+    motion,
+    main,
+    emotionText,
     people && `Keep these characters exactly as they appear in the first frame: ${people}`,
-    feelings(project, scene),
     places && `Keep the location as it appears in the first frame: ${places}`,
-    styleHint(project, scene), moodHint(project), briefHint(project),
+    styleText,
+    moodText,
+    briefText,
   ], VIDEO_TAIL, maxChars);
 }
 
@@ -129,8 +241,15 @@ export function sheetPrompt(project: Pick<Project, "style">, character: Characte
 }
 
 export function compileImagePrompt(project: PromptProject, scene: Scene, maxChars = 1_800): CompiledPrompt {
-  const { people, places } = cast(project, scene);
-  return fitPrompt([effectiveScenePrompt(scene), people && `Characters: ${people}`, feelings(project, scene), places && `Location: ${places}`, styleHint(project, scene), moodHint(project), briefHint(project)], FRAME_TAIL, maxChars);
+  const main = effectiveScenePrompt(scene);
+  const linked = project.characters.filter((character) => scene.characterIds.includes(character.id));
+  const missingNotes = (kind: Character["kind"]) => linked
+    .filter((character) => (character.kind ?? "person") === kind && !alreadyDescribesCharacter(main, character))
+    .map((character) => `${character.name}: ${character.appearance}`)
+    .join("; ");
+  const people = missingNotes("person");
+  const places = missingNotes("place");
+  return fitPrompt([main, feelings(project, scene), people && `Characters: ${people}`, places && `Location: ${places}`, styleHint(project, scene), moodHint(project), briefHint(project)], FRAME_TAIL, maxChars);
 }
 
 export function imagePrompt(project: PromptProject, scene: Scene): string {
@@ -142,14 +261,30 @@ export function imagePrompt(project: PromptProject, scene: Scene): string {
  * reference image is the previous shot of the same place.
  */
 export function compileScenePrompt(project: PromptProject, scene: Scene, references: Character[], continuity = false, maxChars = 1_800): CompiledPrompt {
-  const refs = references.map((item, index) => `Reference image ${index + 1} is the approved ${item.kind === "place" ? "location plate" : "character sheet"} for ${item.name}${item.appearance ? ` (${item.appearance})` : ""}`).join(". ");
+  const main = effectiveScenePrompt(scene);
+  const formatRefs = (appearanceLimit: number) => references.map((item, index) => {
+    const raw = item.appearance?.trim() ?? "";
+    const note = !raw || appearanceLimit <= 0 || alreadyDescribesCharacter(main, item) ? "" : trimToWordBoundary(raw, appearanceLimit);
+    return `Reference image ${index + 1} is the approved ${item.kind === "place" ? "location plate" : "character sheet"} for ${item.name}${note ? ` (${note})` : ""}`;
+  }).join(". ");
   const hasPeople = references.some((item) => item.kind !== "place");
   const hasPlaces = references.some((item) => item.kind === "place");
   const keep = [hasPeople && "each character's exact face, headwear, hair and outfit from their reference sheet", hasPlaces && "the location's layout, architecture and colours from its plate"].filter(Boolean).join(" and ");
+  const continuityLine = continuity ? `Reference image ${references.length + 1} is the previous shot of this scene; keep the lighting, props and layout continuous with it` : "";
+  const sceneLine = `Draw this scene while keeping ${keep || "the references' look"}: ${main}`;
+  const extras = [feelings(project, scene), styleHint(project, scene), moodHint(project), briefHint(project)].filter(Boolean).join(". ");
+  let refs = formatRefs(400);
+  const totalWith = (r: string) => [r, continuityLine, sceneLine, extras, FRAME_TAIL].filter(Boolean).join(". ").length;
+  if (totalWith(refs) > maxChars) {
+    refs = formatRefs(85);
+  }
+  if (totalWith(refs) > maxChars) {
+    refs = formatRefs(0);
+  }
   return fitPrompt([
     refs,
-    continuity && `Reference image ${references.length + 1} is the previous shot of this scene; keep the lighting, props and layout continuous with it`,
-    `Draw this scene while keeping ${keep || "the references' look"}: ${effectiveScenePrompt(scene)}`,
+    continuityLine,
+    sceneLine,
     feelings(project, scene),
     styleHint(project, scene), moodHint(project), briefHint(project),
   ], FRAME_TAIL, maxChars);

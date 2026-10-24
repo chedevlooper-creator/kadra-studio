@@ -29,6 +29,25 @@ const generation = {};
 registry[PROVIDERS] = providers;
 const live = () => registry[PROVIDERS] ?? providers;
 
+let uploadChain: Promise<unknown> = Promise.resolve();
+async function pacedUpload(image: Buffer, type: "jpg" | "png"): Promise<string> {
+  const run = uploadChain.then(async () => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1_200 * attempt));
+      try {
+        const url = await live().uploadImage(image, type);
+        await new Promise((resolve) => setTimeout(resolve, 650));
+        return url;
+      } catch (error) {
+        if (attempt === 4 || !(error instanceof Error) || !/429|SlowDown|hız sınırı|yüklenemedi/i.test(error.message)) throw error;
+      }
+    }
+    throw new Error("GMI yüklemesi tamamlanamadı.");
+  });
+  uploadChain = run.catch(() => undefined);
+  return run;
+}
+
 /** One background loop per server process; leases in the store keep separate processes from doubling work. */
 export function ensureProductionWorker(): Worker | null {
   if (process.env.KADRA_WORKER === "off") return null;
@@ -39,6 +58,8 @@ export function ensureProductionWorker(): Worker | null {
       repository,
       publicDirectory,
       paidOnly: true,
+      concurrency: 12,
+      pollIntervalMs: 2_500,
       imageEngine: () => {
         const p = live();
         if (!p.nvidiaConfigured()) return null;
@@ -48,7 +69,7 @@ export function ensureProductionWorker(): Worker | null {
         };
       },
       videoEngine: () => live().gmiConfigured() ? {
-        upload: (image, type) => live().uploadImage(image, type),
+        upload: (image, type) => pacedUpload(image, type),
         submit: (model, payload) => live().submitRequest(model, payload),
         status: (requestId) => live().getRequest(requestId),
         download: (url) => live().downloadMedia(url),

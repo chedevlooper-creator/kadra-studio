@@ -5,7 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { createProjectRepository } from './projects';
 import { flowTemplate } from './templates/flow-template';
+import { balonlarMasterTemplate } from './templates/balonlar-master';
 import { audioPlan, storyboardCsv, csvCell } from './creative';
+import { titleCardStyle, titleCardText } from './text';
+import { sanitizeSatirePrompt } from './production/prompts';
 async function fixture(t: { after: (fn: () => Promise<void>) => void }, nvidia = false) {
   const dir=await mkdtemp(path.join(os.tmpdir(),'kadra-flow-'));t.after(()=>rm(dir,{recursive:true,force:true}));
   return createProjectRepository(dir,{providers:async()=>({nvidia,gmi:false,ffmpeg:true})});
@@ -43,4 +46,18 @@ test('full pipeline approves a passing character then continues to frame prepara
   await repository.completeStep(p.id,started.run!.id,claim!.step.id,{kind:'character',note:'',uncertain:false,failedSubmissions:0});
   assert.equal((await repository.getProject(p.id)).characters[0].sheet.status,'approved');
   assert.equal((await repository.claimStep(`${process.pid}:pass`,60_000))?.step.kind,'image');
+});
+test('Balonlar master template and script auto-planner preserve all 32 shots, 12 characters, 4 red David and Goliath cards, and voiced Final spots',async t=>{
+  const repository=await fixture(t);const master=balonlarMasterTemplate('16:9');
+  const imported=await repository.importStoryboard(master);
+  assert.equal(imported.scenes.length,32);assert.equal(imported.characters.length,12);assert.equal(imported.narration.engine,'local');
+  const redTitles=imported.scenes.filter(s=>s.kind==='title' && titleCardStyle(s.description,`${s.title} ${s.screenText}`).isRed);
+  assert.equal(redTitles.length,4);assert.ok(redTitles.every(s=>titleCardText(s.description)==='David and Goliath'));
+  const voiced=imported.scenes.filter(s=>Boolean(s.narration.trim()));
+  assert.equal(voiced.length,3);assert.match(voiced[0].narration,/Plastik doğaya ve vatanınıza zararlıdır/);
+  assert.ok(imported.scenes.filter(s=>s.kind==='video').every(s=>s.promptEn===s.prompt && (s.code==='6A' || s.characterIds.length>0)));
+  const rawCreated=await repository.createProject({title:'Balonlar',script:'İlk sahne: Dudayev ve Mashadov dağ olur.\n1. Sahne: Kadirov balon olur.\nSahne 10: Siyah ekranda kırmızı yazıyla David and Goliath\nFinal: Kamu spotu.',style:'Sinematik',aspectRatio:'16:9',budget:null});
+  const planned=await repository.planProject(rawCreated.id,rawCreated.revision);
+  assert.equal(planned.scenes.length,32);assert.equal(planned.characters.length,12);assert.equal(planned.narration.engine,'local');
+  assert.match(sanitizeSatirePrompt('öldürülmüş bir çocuk ve kanlı dolarlar. Sahnede rusya bayrağı dışında asla bayrak olmayacak.'),/Only the Russian tricolor flag/i);
 });

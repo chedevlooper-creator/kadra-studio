@@ -241,7 +241,7 @@ export default function NewProjectDialog({ open, onClose, onCreated }: NewProjec
         </button>
       </div>
 
-      <button type="button" className="template-launch" disabled={busy || phase === "uncertain" || phase === "created"} onClick={() => void createFlowTemplate()}><Film size={20} /><span><strong>Balonlar ve Dağlar şablonu</strong><small>31 sahne, 9 oyuncu, 177 saniye. Ücretli bir şey başlatmaz.</small></span></button>
+      <button type="button" className="template-launch" disabled={busy || phase === "uncertain" || phase === "created"} onClick={() => void createFlowTemplate()}><Film size={20} /><span><strong>Balonlar ve Dağlar · Tam Senaryo Şablonu</strong><small>32 sahne, 12 karakter, 181 sn · 4 kırmızı &ldquo;David and Goliath&rdquo; ara kartı ve 2 seslendirmeli kamu spotu hazır.</small></span></button>
       <form onSubmit={submit} aria-busy={busy}>
         <fieldset className="new-project-fields" disabled={busy || phase === "created" || phase === "uncertain"}>
           <div className="field">

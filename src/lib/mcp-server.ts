@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { wakeProductionWorker } from "./production/runtime";
 import { repository } from "./store";
 import {
   compileHiggsfieldPrompt,
@@ -9,7 +11,8 @@ import {
   MCP_AGENT_SKILLS,
   studioProjectInput,
 } from "./studio-draft";
-import type { AspectRatio } from "./types";
+import { balonlarMasterTemplate } from "./templates/balonlar-master";
+import type { AspectRatio, QualityTier } from "./types";
 
 export const MCP_RPC_REQUEST_SCHEMA = z.object({
   jsonrpc: z.literal("2.0").default("2.0"),
@@ -118,6 +121,31 @@ export const KADRA_MCP_TOOLS = [
       properties: {
         projectId: { type: "string", description: "Proje kimliği (boş bırakılırsa ilk proje kullanılır)" },
         lensMm: { type: "number", enum: [24, 35, 50, 85], description: "Kamera odak uzaklığı (mm)" },
+      },
+    },
+  },
+  {
+    name: "kadra_start_production",
+    description:
+      "Belirtilen Kadra projesinin (veya 'Balonlar ve Dağlar · Tam Senaryo' şablonunun) canlı GMI fiyat teklifini hazırlar, onaylar ve arka plan üretim işçisini (worker) tek seferde başlatır.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", description: "Proje kimliği (boş bırakılırsa en üstteki proje veya Balonlar ve Dağlar kullanılır)" },
+        target: { type: "string", enum: ["frames", "film"], description: "Üretim hedefi: 'frames' (yalnızca kareler) veya 'film' (tam video + ses + montaj)" },
+        quality: { type: "string", enum: ["economy", "balanced", "best"], description: "Kalite katmanı" },
+        budget: { type: "number", description: "Bütçe tavanı (USD, varsayılan 18)" },
+      },
+    },
+  },
+  {
+    name: "kadra_get_production_status",
+    description:
+      "Çalışan veya tamamlanan bir Kadra projesinin canlı üretim ilerlemesini, tamamlanan adımlarını, olay günlüğünü ve çıktı MP4 adresini döndürür.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", description: "Proje kimliği (boş bırakılırsa en üstteki proje kullanılır)" },
       },
     },
   },
@@ -331,6 +359,142 @@ export async function handleMcpRpcRequest(req: McpRpcRequest): Promise<McpRpcRes
         result: {
           content: [{ type: "text", text: py }],
           script: py,
+        },
+      };
+    }
+
+    if (toolName === "kadra_start_production") {
+      const boot = await repository.getBootstrap();
+      const requestedId = typeof args.projectId === "string" ? args.projectId.trim() : "";
+      let targetProject =
+        boot.projects.find((item) => item.id === requestedId) ??
+        boot.projects.find((item) => item.title.includes("Balonlar ve Dağlar · Tam Senaryo")) ??
+        boot.projects[0];
+      if (!targetProject) {
+        targetProject = await repository.importStoryboard(balonlarMasterTemplate("16:9"));
+      }
+      if (targetProject.run?.status === "running") {
+        wakeProductionWorker();
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            content: [
+              {
+                type: "text",
+                text: `Üretim zaten çalışıyor: "${targetProject.title}" (${targetProject.id}) — %${targetProject.run.progress} tamamlandı.`,
+              },
+            ],
+            projectId: targetProject.id,
+            runId: targetProject.run.id,
+            status: targetProject.run.status,
+            progress: targetProject.run.progress,
+          },
+        };
+      }
+      const target: "frames" | "film" = args.target === "frames" ? "frames" : "film";
+      const quality: QualityTier = args.quality === "balanced" || args.quality === "best" ? args.quality : "economy";
+      const budget = typeof args.budget === "number" && Number.isFinite(args.budget) && args.budget > 0 ? args.budget : 18;
+      // Auto-approve any reviewed character sheets with a chosen attempt so reference-guided frame generation works in one shot.
+      for (const character of targetProject.characters) {
+        if (character.sheet.status === "review" && character.sheet.chosen) {
+          targetProject = await repository.reviewCharacterSheet(
+            targetProject.id,
+            targetProject.revision,
+            character.id,
+            "approve",
+            character.sheet.chosen,
+          );
+        }
+      }
+      const quoted = await repository.prepareQuote(targetProject.id, {
+        revision: targetProject.revision,
+        target,
+        quality,
+        budget,
+        referenceFrames: true,
+        frameModel: "gemini-nano-banana-2.1",
+        selections: targetProject.scenes
+          .filter((scene) => scene.kind === "video")
+          .map((scene) => ({ sceneId: scene.id, motion: "ai" as const, videoModel: null })),
+      });
+      if (!quoted.quote || quoted.quote.errors.length > 0 || !quoted.quote.withinBudget) {
+        return {
+          jsonrpc: "2.0",
+          id,
+          error: {
+            code: -32000,
+            message: quoted.quote?.errors.join(" ") || "Teklif bütçe sınırını aşıyor veya hazırlanamadı.",
+            data: quoted.quote,
+          },
+        };
+      }
+      const key = `mcp-run-${randomUUID()}`;
+      const started = await repository.startRun(quoted.id, quoted.revision, key, quoted.quote.id, {
+        target,
+        reuseImages: true,
+      });
+      wakeProductionWorker();
+      return {
+        jsonrpc: "2.0",
+        id,
+        result: {
+          content: [
+            {
+              type: "text",
+              text: `MCP üzerinden üretim başlatıldı: "${started.title}" (${started.id}) — ${started.run?.steps.length ?? 0} adım, tahmini maliyet: ${quoted.quote.total.toFixed(2)} USD.`,
+            },
+          ],
+          projectId: started.id,
+          title: started.title,
+          runId: started.run?.id ?? null,
+          status: started.run?.status ?? started.status,
+          totalSteps: started.run?.steps.length ?? 0,
+          estimatedUsd: quoted.quote.total,
+        },
+      };
+    }
+
+    if (toolName === "kadra_get_production_status") {
+      const boot = await repository.getBootstrap();
+      const requestedId = typeof args.projectId === "string" ? args.projectId.trim() : "";
+      const project =
+        boot.projects.find((item) => item.id === requestedId) ??
+        boot.projects.find((item) => item.title.includes("Balonlar ve Dağlar · Tam Senaryo")) ??
+        boot.projects[0];
+      if (!project) {
+        return {
+          jsonrpc: "2.0",
+          id,
+          error: { code: -32602, message: "Proje bulunamadı." },
+        };
+      }
+      if (project.run?.status === "running") {
+        wakeProductionWorker();
+      }
+      const doneSteps = project.run?.steps.filter((step) => step.status === "done").length ?? 0;
+      const runningSteps = project.run?.steps.filter((step) => step.status === "running").length ?? 0;
+      const totalSteps = project.run?.steps.length ?? 0;
+      const activeStep = project.run?.steps.find((step) => step.status === "running" || step.status === "pending") ?? null;
+      const payload = {
+        projectId: project.id,
+        title: project.title,
+        status: project.status,
+        runStatus: project.run?.status ?? null,
+        progress: project.run?.progress ?? 0,
+        doneSteps,
+        runningSteps,
+        totalSteps,
+        activeStep: activeStep ? { kind: activeStep.kind, status: activeStep.status, sceneId: activeStep.sceneId } : null,
+        recentEvents: (project.run?.events ?? []).slice(-6),
+        output: project.output,
+      };
+      return {
+        jsonrpc: "2.0",
+        id,
+        result: {
+          content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+          ...payload,
         },
       };
     }

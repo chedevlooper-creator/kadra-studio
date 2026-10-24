@@ -101,7 +101,7 @@ test("handleMcpRpcRequest serves initialize, tools/list, and tools/call for kadr
 
   const listRes = await handleMcpRpcRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" });
   const tools = (listRes.result as { tools: typeof KADRA_MCP_TOOLS }).tools;
-  assert.equal(tools.length, 6);
+  assert.equal(tools.length, 8);
 
   const callPrompt = await handleMcpRpcRequest({
     jsonrpc: "2.0",

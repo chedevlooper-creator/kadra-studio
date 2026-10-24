@@ -33,20 +33,51 @@ interface Segment { title: string; content: string }
 
 /** Explicit labels begin a new shot even if their numbers repeat. Never deduplicate script text. */
 export function parseScript(script: string): Segment[] {
-  const source = script.replace(/\r\n?/g, "\n").trim();
+  const source = script
+    .replace(/\r\n?/g, "\n")
+    .replace(/\s*bana\s+tek\s+seferde\s+hatasız\s+böyle\s+bir\s+video\s+üretecek\s+sistem\.?\s*$/iu, "")
+    .trim();
   if (source.length < 10) throw new AppError(400, "Plan hazırlamak için en az 10 karakterlik bir senaryo yazın.");
   if (source.length > 30_000) throw new AppError(400, "Senaryo en fazla 30.000 karakter olabilir.");
   const label = /^\s*(?:#{1,3}\s*)?((?:sahne\s*\d+|\d+\s*[.)-]?\s*sahne|[iİ]lk\s+sahne|g[iİ]r[iİ][şs]|[iİ]ntro|f[iİ]nal|son\s+sahne)(?:\s*[–—-]\s*[^:]+)?)(?:\s*:\s*(.*)|\s*)$/iu;
+  const uncolonScene = /^\s*(?:#{1,3}\s*)?(sahne\s*\d+|\d+\s*[.)-]?\s*sahne)\s+([^:–—-].*)$/iu;
+  const intertitleLine = /^\s*siyah\s+ekranda\b.*$/iu;
+  const spotLine = /^\s*(\d+)\s*[.)-]?\s*spot\b(?:\s*:\s*(.*))?$/iu;
+  const spotPreambleOnly = /^(?:daktilo\s+yazısı\s+ve\s+seslendirme\s+ile\s+kamu\s+spotu\s*)?$/iu;
   const segments: Segment[] = [];
   let current: Segment | null = null;
   let labeled = false;
+  let spotCount = 0;
   for (const line of source.split("\n")) {
     const match = line.match(label);
-    if (match) {
+    const uncolon = !match ? line.match(uncolonScene) : null;
+    const spot = !match && !uncolon ? line.match(spotLine) : null;
+    if (match || uncolon) {
       labeled = true;
       if (current) segments.push(current);
-      current = { title: match[1].trim(), content: (match[2] || "").trim() };
+      current = match
+        ? { title: match[1].trim(), content: (match[2] || "").trim() }
+        : { title: uncolon![1].trim(), content: uncolon![2].trim() };
+    } else if (spot && labeled) {
+      spotCount += 1;
+      const inline = (spot[2] || "").trim();
+      if (current && spotPreambleOnly.test(current.content.trim())) {
+        current.title = `${current.title} · ${spotCount}. Spot`;
+        if (inline) current.content += `${current.content ? "\n" : ""}${inline}`;
+      } else {
+        if (current) segments.push(current);
+        current = {
+          title: `Final · ${spotCount}. Spot`,
+          content: inline ? `Daktilo yazısı ve seslendirme ile kamu spotu\n${inline}` : "Daktilo yazısı ve seslendirme ile kamu spotu",
+        };
+      }
+    } else if (intertitleLine.test(line)) {
+      labeled = true;
+      if (current && current.content.trim()) segments.push(current);
+      segments.push({ title: "Ara Kart", content: line.trim() });
+      current = null;
     } else {
+      if (!line.trim() && !current) continue;
       current ||= { title: "Giriş", content: "" };
       current.content += `${current.content ? "\n" : ""}${line}`;
     }
@@ -57,7 +88,8 @@ export function parseScript(script: string): Segment[] {
   return result.map((segment) => ({ ...segment, content: segment.content.trim() || segment.title }));
 }
 
-export { titleCardText } from "./text";
+import { titleCardText } from "./text";
+export { titleCardText };
 
 function baseScene(index: number, image: string): Omit<Scene, "title" | "description" | "prompt" | "kind" | "camera" | "duration" | "model" | "modelReason" | "notes"> {
   return { id: randomUUID(), order: index + 1, promptEn: "", promptEnSource: "", motionPrompt: "", status: "draft", image, imageSource: "reference", review: null, frameKey: "", frameModel: "", emotions: {}, repair: null, characterIds: [], narration: "", motion: "free", videoModel: null, code: "", group: "", audioNotes: "", screenText: "" };
@@ -73,6 +105,7 @@ export interface StoryboardShot {
   visualSummary: string;
   cameraMovement?: string;
   aiPrompt: string;
+  motionPrompt?: string;
   audioCues?: string;
   voiceoverOrText?: string;
 }
@@ -85,6 +118,7 @@ export function scenesFromStoryboard(shots: StoryboardShot[], image: string): Sc
   return shots.map((shot, index): Scene => {
     const screenText = BLANK.test(shot.voiceoverOrText ?? "") ? "" : shot.voiceoverOrText!.trim();
     const isTitle = /siyah ekran|black screen|yazı kartı|title card/i.test(shot.visualSummary) || /^pure black screen/i.test(shot.aiPrompt.trim());
+    const hasVoiceover = /(?:dış\s*ses|seslendirme|kamu\s*spotu)/iu.test(screenText);
     const headline = shot.visualSummary.trim().split(/(?<=[.!?])\s/)[0].slice(0, 70);
     return {
       ...baseScene(index, image),
@@ -93,11 +127,13 @@ export function scenesFromStoryboard(shots: StoryboardShot[], image: string): Sc
       title: `${shot.id} · ${headline}`.slice(0, 160),
       description: isTitle ? quotedText(screenText) || shot.visualSummary : shot.visualSummary,
       prompt: shot.aiPrompt,
+      motionPrompt: shot.motionPrompt?.trim() ?? "",
       duration: Math.min(30, Math.max(2, Math.round(shot.durationSec))),
       camera: shot.cameraMovement?.trim() || (isTitle ? "Sabit kadraj" : "Yavaş yaklaşma"),
       model: isTitle ? TITLE_MODEL : VIDEO_MODEL,
       modelReason: isTitle ? TITLE_REASON : VIDEO_REASON,
       kind: isTitle ? "title" : "video",
+      narration: hasVoiceover ? (quotedText(screenText) || titleCardText(screenText)).slice(0, 600) : "",
       audioNotes: shot.audioCues?.trim() ?? "",
       screenText,
       notes: ["Çekim storyboard dosyasından içe aktarıldı; prompt, süre ve kamera notu aynen korundu.", ...(shot.timeRange ? [`Zaman kodu: ${shot.timeRange}`] : [])],
@@ -115,7 +151,8 @@ export function scriptFromStoryboard(shots: StoryboardShot[]): string {
 
 export function planScenes(script: string, style: string, image: string): Scene[] {
   return parseScript(script).map((segment, index) => {
-    const isTitle = /(?:yazı\s*kartı|ekranda\s*(?:şu\s*)?yazı|başlık\s*kartı|daktilo)/iu.test(segment.content);
+    const isTitle = /(?:yazı\s*kartı|siyah\s+ekranda|ekranda\s*(?:şu\s*|kırmızı\s*|beyaz\s*)?yazı|başlık\s*kartı|daktilo|kamu\s*spotu)/iu.test(segment.content) || /^ara\s+kart$/iu.test(segment.title);
+    const hasVoiceover = /(?:seslendirme|dış\s*ses|kamu\s*spotu|\bspot\b)/iu.test(`${segment.title} ${segment.content}`);
     return {
       ...baseScene(index, image),
       title: segment.title.slice(0, 160), description: segment.content,
@@ -125,6 +162,8 @@ export function planScenes(script: string, style: string, image: string): Scene[
       model: isTitle ? TITLE_MODEL : VIDEO_MODEL,
       modelReason: isTitle ? TITLE_REASON : VIDEO_REASON,
       kind: isTitle ? "title" : "video",
+      narration: hasVoiceover ? titleCardText(segment.content).slice(0, 600) : "",
+      screenText: isTitle ? segment.content.slice(0, 500) : "",
       notes: ["Plan kural tabanlı ayrıştırıcıyla hazırlandı; dil modeli kullanılmadı.", "Süre ve kamera bir başlangıç önerisidir; düzenlenebilir."],
     };
   });

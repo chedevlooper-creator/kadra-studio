@@ -4,6 +4,7 @@ import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { cameraMove, type CameraMoveId } from "../cinema";
+import { titleCardStyle } from "../text";
 import type { AspectRatio, Box } from "../types";
 
 const FPS = 30;
@@ -122,9 +123,10 @@ export function layoutTitle(text: string, width: number, height: number): { font
   }
 }
 
-export async function renderTitleClip({ text, output, duration, aspectRatio }: { text: string; output: string; duration: number; aspectRatio: AspectRatio }): Promise<void> {
+export async function renderTitleClip({ text, rawText, output, duration, aspectRatio }: { text: string; rawText?: string; output: string; duration: number; aspectRatio: AspectRatio }): Promise<void> {
   const { width, height } = outputSize(aspectRatio);
   const fontFile = await findFont();
+  const style = titleCardStyle(rawText ?? text);
   const { fontSize, lines } = layoutTitle(text || " ", width, height);
   const lineHeight = Math.round(fontSize * 1.4);
   const top = Math.round((height - lineHeight * lines.length) / 2);
@@ -132,10 +134,10 @@ export async function renderTitleClip({ text, output, duration, aspectRatio }: {
   try {
     // Each line comes from a file so quotes, colons and percent signs in the script are never parsed as filter syntax.
     await Promise.all(lines.map((line, index) => writeFile(path.join(work, `line-${index}.txt`), line)));
-    const draw = lines.map((_, index) => `drawtext=fontfile='${fontFile.replace(/'/g, "")}':textfile='line-${index}.txt':expansion=none:fontcolor=0xF2F3F1:fontsize=${fontSize}:x=(w-text_w)/2:y=${top + index * lineHeight}`);
+    const draw = lines.map((_, index) => `drawtext=fontfile='${fontFile.replace(/'/g, "")}':textfile='line-${index}.txt':expansion=none:fontcolor=${style.fontColor}:fontsize=${fontSize}:x=(w-text_w)/2:y=${top + index * lineHeight}`);
     const filter = [...draw, `fade=t=in:st=0:d=${FADE}`, `fade=t=out:st=${(duration - FADE).toFixed(2)}:d=${FADE}`, "format=yuv420p"].join(",");
     await mkdir(path.dirname(output), { recursive: true });
-    await ffmpeg(["-f", "lavfi", "-i", `color=c=0x111214:s=${width}x${height}:r=${FPS}:d=${duration}`, "-vf", filter, "-frames:v", String(Math.round(duration * FPS)), ...ENCODE, "-an", path.resolve(output)], work);
+    await ffmpeg(["-f", "lavfi", "-i", `color=c=${style.backgroundColor}:s=${width}x${height}:r=${FPS}:d=${duration}`, "-vf", filter, "-frames:v", String(Math.round(duration * FPS)), ...ENCODE, "-an", path.resolve(output)], work);
   } finally { await rm(work, { recursive: true, force: true }); }
 }
 

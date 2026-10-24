@@ -25,7 +25,11 @@ export const VIDEO_MODELS: VideoModelSpec[] = [
     payload: ({ prompt, imageUrl, duration, aspectRatio, seed }) => ({ prompt, image: imageUrl, durationSeconds: duration, aspectRatio, resolution: "720p", generateAudio: false, personGeneration: "allow_adult", seed }) },
   { id: "Minimax-Hailuo-2.3-Fast", label: "Hailuo 2.3 Fast", quality: 2, maxPrompt: 1_900, durations: [6, 10], aspectRatios: "any", priceKey: "768p",
     // Hailuo reads its own bracketed camera commands at the start of the prompt.
-    payload: ({ prompt, imageUrl, duration, camera }) => ({ prompt: camera ? `${CAMERA_MOVES.find((move) => move.id === camera)!.hailuo} ${prompt}` : prompt, first_frame_image: imageUrl, duration, resolution: "768P", prompt_optimizer: true }) },
+    payload: ({ prompt, imageUrl, duration, camera }) => {
+      const cmd = camera ? CAMERA_MOVES.find((move) => move.id === camera)?.hailuo ?? "" : "";
+      const body = cmd ? prompt.replace(/^Camera:\s*[^.]+\.\s*/i, "") : prompt;
+      return { prompt: cmd ? `${cmd} ${body}` : prompt, first_frame_image: imageUrl, duration, resolution: "768P", prompt_optimizer: true };
+    } },
   { id: "seedance-2-0-fast-260128", label: "Seedance 2.0 Fast", quality: 2, maxPrompt: 1_900, durations: range(4, 12), aspectRatios: ["16:9", "9:16", "1:1"], priceKey: "720p",
     payload: ({ prompt, imageUrl, duration, aspectRatio, seed }) => ({ prompt, first_frame: imageUrl, duration, resolution: "720p", ratio: aspectRatio, generate_audio: false, watermark: false, seed }) },
   { id: "wan2.6-i2v", label: "Wan 2.6", quality: 2, maxPrompt: 1_900, durations: [5, 10, 15], aspectRatios: "any", priceKey: "720p",

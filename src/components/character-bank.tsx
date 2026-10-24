@@ -148,11 +148,26 @@ export default function CharacterBank({ project, providers, disabled, onProjectC
     const budgetValue = Number.isFinite(parsedBudget) && parsedBudget > 0 ? parsedBudget : undefined;
     void run("start", async () => { apply(await send<{ project: Project }>(`${base}/run`, json("POST", { revision: project.revision, characterIds: estimate.lines.map((line) => line.characterId), maxCost: estimate.total, engine, ...(budgetValue !== undefined ? { budget: budgetValue } : {}) }, { "Idempotency-Key": crypto.randomUUID() })), "Karakter sayfaları üretiliyor; hakem her denemeyi puanlıyor."); setEstimate(null); });
   }
+  const reviewable = characters.filter((character) => character.sheet.status === "review" && character.sheet.attempts.length > 0);
+  function approveAllReady() {
+    if (!reviewable.length) return;
+    void run("approve-all", async () => {
+      let latest = project;
+      for (const character of reviewable) {
+        const attemptId = viewing[character.id] ?? character.sheet.chosen ?? character.sheet.attempts.at(-1)?.id ?? null;
+        const result = await send<{ project: Project }>(`${base}/${character.id}/review`, json("POST", { revision: latest.revision, action: "approve", attemptId }));
+        latest = result.project;
+      }
+      onProjectChange(latest);
+      notify(`${reviewable.length} karakter sayfası onaylandı; sahneler bu sayfaları referans alacak.`);
+    });
+  }
 
   return <section className="char-bank" aria-labelledby="char-bank-title">
     <div className="char-bank-head">
       <div><h2 id="char-bank-title">Oyuncular ve mekânlar <span className="count">{characters.length}</span></h2><p className="quiet">Her biri için bir referans görsel çizilir; onayladıkların her sahnede aynı görünür.</p></div>
       <div className="char-bank-actions">
+        {reviewable.length > 0 ? <button type="button" className="button button-lamp" disabled={busy !== null} onClick={approveAllReady}>{busy === "approve-all" ? <LoaderCircle size={14} className="spin" /> : <Check size={14} />} Hazır olanları onayla ({reviewable.length})</button> : null}
         <button type="button" className="button" disabled={locked} onClick={() => setDraft({ id: null, kind: "person", name: "", appearance: "", aliases: "", style: "", framing: "auto" })}><Plus size={14} /> Karakter ekle</button>
         <button type="button" className="button" disabled={locked} onClick={() => setDraft({ id: null, kind: "place", name: "", appearance: "", aliases: "", style: "", framing: "auto" })}><MapPin size={14} /> Mekân ekle</button>
         <button type="button" className="button button-lamp" disabled={locked || !selected.length} onClick={() => priceRun()}>{busy === "estimate" ? <LoaderCircle size={14} className="spin" /> : <Sparkles size={14} />} Seçilenleri çiz ({selected.length})</button>
@@ -183,20 +198,20 @@ export default function CharacterBank({ project, providers, disabled, onProjectC
             {reference ? <>
               <img src={`/api/projects/${project.id}/media/${reference.file}`} alt="" />
               <span><strong>Referans</strong> {reference.license} · {reference.author}{reference.pageUrl ? <a href={reference.pageUrl} target="_blank" rel="noreferrer" aria-label="Kaynak sayfası"><ExternalLink size={11} /></a> : null}</span>
-              <button type="button" aria-label="Referansı kaldır" disabled={locked} onClick={() => void run("unref", async () => apply(await send<{ project: Project }>(`${base}/${character.id}/reference`, json("DELETE", { revision: project.revision })), "Referans fotoğraf kaldırıldı."))}><X size={13} /></button>
+              <button type="button" aria-label="Referansı kaldır" disabled={busy !== null || character.sheet.status === "producing"} onClick={() => void run("unref", async () => apply(await send<{ project: Project }>(`${base}/${character.id}/reference`, json("DELETE", { revision: project.revision })), "Referans fotoğraf kaldırıldı."))}><X size={13} /></button>
             </> : <>
-              <button type="button" className="char-link" disabled={locked} onClick={() => openSearch(character)}><Search size={12} /> Fotoğraf bul</button>
-              <button type="button" className="char-link" disabled={locked} onClick={() => { uploadFor.current = character.id; uploadInput.current?.click(); }}><Upload size={12} /> Fotoğraf yükle</button>
+              <button type="button" className="char-link" disabled={busy !== null || character.sheet.status === "producing"} onClick={() => openSearch(character)}><Search size={12} /> Fotoğraf bul</button>
+              <button type="button" className="char-link" disabled={busy !== null || character.sheet.status === "producing"} onClick={() => { uploadFor.current = character.id; uploadInput.current?.click(); }}><Upload size={12} /> Fotoğraf yükle</button>
 
             </>}
           </div>
           {attempts.length > 1 ? <div className="char-attempts" aria-label="Denemeler">{attempts.slice(-6).map((attempt) => <button key={attempt.id} type="button" className={attempt.id === shown?.id ? "is-shown" : ""} onClick={() => setViewing({ ...viewing, [character.id]: attempt.id })} title={attempt.verdict ? `${attempt.verdict.ok ? "Hakem onayladı" : "Hakem reddetti"} · ${attempt.verdict.note}` : "Hakem puanı yok"}><img src={attempt.url} alt="" />{attempt.verdict ? <span className={attempt.verdict.ok ? "is-ok" : ""}>{attempt.verdict.ok ? "✓" : "✗"}</span> : null}{attempt.engine === "repair" ? <em className="char-attempt-fix" aria-label="Onarılmış deneme">onarım</em> : null}</button>)}</div> : null}
           {shown?.verdict?.note || character.sheet.note ? <details className="char-note"><summary>{shown?.verdict?.ok === false ? "Kontrol notu" : "Not"}</summary><p>{shown?.verdict?.note ? shown.verdict.note : ""}{shown?.verdict?.note && character.sheet.note ? " " : ""}{character.sheet.note}</p></details> : null}
           <div className="char-actions">
-            {shown && character.sheet.status !== "producing" && (character.sheet.status !== "approved" || shown.id !== character.sheet.chosen) ? <button type="button" className="button button-lamp" disabled={locked} onClick={() => void run("approve", async () => apply(await send<{ project: Project }>(`${base}/${character.id}/review`, json("POST", { revision: project.revision, action: "approve", attemptId: shown.id })), `${character.name} onaylandı; sahneler bu sayfayı referans alacak.`))}><Check size={13} /> Onayla</button> : null}
+            {shown && character.sheet.status !== "producing" && (character.sheet.status !== "approved" || shown.id !== character.sheet.chosen) ? <button type="button" className="button button-lamp" disabled={busy !== null} onClick={() => void run("approve", async () => apply(await send<{ project: Project }>(`${base}/${character.id}/review`, json("POST", { revision: project.revision, action: "approve", attemptId: shown.id })), `${character.name} onaylandı; sahneler bu sayfayı referans alacak.`))}><Check size={13} /> Onayla</button> : null}
             {shown && providers.gmi && character.sheet.status !== "producing" ? <button type="button" className="button" disabled={locked} title="Sayfanın yalnızca işaretlediğin bölgesini yeniden çizdir" onClick={() => setRepairTarget({ kind: "character", character, attempt: shown })}><WandSparkles size={13} /> Bölgeyi onar</button> : null}
-            {character.sheet.status === "review" ? <button type="button" className="button" disabled={locked} onClick={() => void run("reject", async () => apply(await send<{ project: Project }>(`${base}/${character.id}/review`, json("POST", { revision: project.revision, action: "reject" })), "Karakter sayfası reddedildi."))}>Reddet</button> : null}
-            <button type="button" className="button" aria-label={`${character.name} düzenle`} disabled={locked} onClick={() => setDraft({ id: character.id, kind: character.kind, name: character.name, appearance: character.appearance, aliases: character.aliases.join(", "), style: character.style, framing: character.framing ?? "auto" })}><Pencil size={13} /></button>
+            {character.sheet.status === "review" ? <button type="button" className="button" disabled={busy !== null} onClick={() => void run("reject", async () => apply(await send<{ project: Project }>(`${base}/${character.id}/review`, json("POST", { revision: project.revision, action: "reject" })), "Karakter sayfası reddedildi."))}>Reddet</button> : null}
+            <button type="button" className="button" aria-label={`${character.name} düzenle`} disabled={busy !== null || character.sheet.status === "producing"} onClick={() => setDraft({ id: character.id, kind: character.kind, name: character.name, appearance: character.appearance, aliases: character.aliases.join(", "), style: character.style, framing: character.framing ?? "auto" })}><Pencil size={13} /></button>
             <button type="button" className="button" aria-label={`${character.name} sil`} disabled={locked} onClick={() => { if (window.confirm(`${character.name} ve üretilen sayfaları silinsin mi?`)) void run("delete", async () => apply(await send<{ project: Project }>(`${base}/${character.id}`, json("DELETE", { revision: project.revision })), "Karakter silindi.")); }}><Trash2 size={13} /></button>
           </div>
         </div>

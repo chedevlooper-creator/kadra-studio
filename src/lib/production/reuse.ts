@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { TIER_MIN_QUALITY, VIDEO_MODELS } from "../routing/video-router";
-import { titleCardText } from "../text";
+import { titleCardStyle, titleCardText } from "../text";
 import type { Box, Character, ClipRecord, Project, QualityTier, ReviewIssue, Scene, SheetAttempt } from "../types";
 import { imagePrompt, sceneSheetPrompt, videoPrompt } from "./prompts";
 
@@ -61,7 +61,8 @@ export function cameraClipKey(project: Pick<Project, "aspectRatio">, scene: Scen
 }
 
 export function titleClipKey(project: Pick<Project, "aspectRatio">, scene: Scene): string {
-  return fingerprint(["title", RENDER_VERSION, titleCardText(scene.description), scene.duration, project.aspectRatio]);
+  const style = titleCardStyle(scene.description, scene.screenText);
+  return fingerprint(["title", RENDER_VERSION, titleCardText(scene.description), scene.duration, project.aspectRatio, ...(style.isRed ? ["red"] : [])]);
 }
 
 /** A paid clip depends on the exact frame it animates and the motion asked for, not on which model made it. */

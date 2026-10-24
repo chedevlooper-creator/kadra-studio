@@ -33,7 +33,26 @@ test("truncation drops optional sections and preserves the no-text tail", () => 
   const compiled = compileScenePrompt(project, long, [character], false, 600);
   assert.equal(compiled.truncated, true);
   assert.ok(compiled.prompt.length <= 600, "the prompt fits the model budget");
+  assert.match(compiled.prompt, /crowded street/, "the scene description itself is truncated to fit rather than skipped");
   assert.ok(compiled.prompt.endsWith("no text, no captions, no watermark"), "the negative tail survives");
+});
+
+test("multi-character reference sheets compact their notes so the scene prompt is never starved", () => {
+  const verboseCast: Character[] = [1, 2, 3, 4].map((index) => ({
+    ...character,
+    id: `c${index}`,
+    name: `Hero ${index}`,
+    appearance: "photorealistic granite mountain peak with detailed carved historical features, snow-swept cliffs, dramatic storm clouds, and a billowing banner on the summit ".repeat(2).trim(),
+  }));
+  const multiScene: Scene = {
+    ...scene,
+    characterIds: ["c1", "c2", "c3", "c4"],
+    prompt: "Style: Epic photorealistic landscape. Four monumental mountain peaks stand above the valley as a stone hand catches the floating balloon.",
+  };
+  const compiled = compileScenePrompt({ ...project, characters: verboseCast }, multiScene, verboseCast, false, 1_800);
+  assert.equal(compiled.truncated, false);
+  assert.match(compiled.prompt, /Four monumental mountain peaks stand above the valley as a stone hand catches the floating balloon/);
+  assert.match(compiled.prompt, /Reference image 4 is the approved character sheet for Hero 4/);
 });
 
 test("video and text-only frame prompts respect their own budgets", () => {
@@ -59,8 +78,10 @@ test("background-enhanced English prompt (promptEn) is used while synced and inv
   assert.match(compileScenePrompt(project, enhanced, [character]).prompt, /Wide 35mm cinematic shot of a lone traveller/);
   assert.match(compileVideoPrompt(project, enhanced).prompt, /Wide 35mm cinematic shot of a lone traveller/);
 
-  const stale: Scene = { ...enhanced, prompt: "adam akşam ormanda yürüyor" };
+  const stale: Scene = { ...enhanced, prompt: "adam akşam ormanda yürüyor", motionPrompt: "Old dolly movement from previous prompt" };
   assert.match(compileImagePrompt(project, stale).prompt, /adam akşam ormanda yürüyor/);
+  assert.doesNotMatch(compileVideoPrompt(project, stale).prompt, /Old dolly movement from previous prompt/, "stale motionPrompt is invalidated when scene.prompt changes");
+  assert.match(compileVideoPrompt(project, { ...enhanced, camera: "Yukarı kaydırma", motionPrompt: "Ada walks forward through the mist" }).prompt, /camera tilts and rises upward/, "user camera selection is included even when motionPrompt is set");
 });
 
 test("the production brief and each character's emotion reach every prompt, and add nothing when empty", () => {

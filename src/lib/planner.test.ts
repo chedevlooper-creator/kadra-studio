@@ -63,3 +63,100 @@ test("storyboard shots keep their prompts, timings and notes; black-screen cards
   assert.match(script, /^Sahne 0 – 0A: Gece/);
   assert.equal(parseScript(script).length, 3, "the generated script re-plans into the same number of shots");
 });
+
+const USER_BALONLAR_SCRIPT = `İlk sahne
+
+ Dudayevin bulunduğu arabaya güdümlü füze düşer melek olarak yükselen ruh ve cahar dudayev devasa bir dağa dönüşür yanında yine dağ olarak şeyh mansur, imam şamil, baysangur vs dağ dudayevde saplı içkerya bayrağını insan Aslan mashadov eline alır
+
+1. Sahne
+Altınlar dolarlar ettafta ahmed kadirov (kolunda rusya bayrağı rozeti var) yere putinin önünde boyun eğmiş halde eğilmiş putin  ona ağzından balon pompasıyla hava veriyor ahmad kadirov gitgide balona dönüp şişen ahmed kadirov kan damlayan bir kalemle ihanet anlaşması imzalayıp kafası elleri ve ayakları gözüken balon olarak havaya uçuyor. Sahnede rusya bayrağı dışında asla bayrak olmayacak
+
+Sahne 2 
+Dudayev dağının etrafında uçan ahmed kadirov balonu dağın içinden uzanan el detayı tutuyor içkerya bayrağı  bayrağın alemi ile ahmed kadirov balonuna değip balonu patlatıyor
+
+Sahne 3 
+Putin morarmış kara kara düşünüyor
+
+Sahne 4
+
+Pembe kırmızı russia başlığıyla ayıya sarılmış ramzan kadirov gerçek fotoğrafı yanakları pembeleşiyor
+
+Sahne 5
+Putin çok daha sinirli daha çok para var ramzan kadirov  putin önünde diz çökmüş putinin elinde hava pompa kadirovun ağzında onu balon gibi şişiriyor. Kadirov gitgide şişiyor taki balon formuna geçip havalanana kadar ve putin tam balon formundayken sahnedeki ak 47yi kadirovun eline veriyor
+
+Sahne 6
+
+Eline silah verilen maymun videosundan kesit
+
+Sahne  7
+
+Kadirov ilk sahnedeki cahar dudayev, mashadov, imam şamil, imam mansur dağları arasında balon olmuş uçuyor silahı ateşliyor. Ağzından çıkan bokları dağların eteklerine sığınmış insanların üstüne fırlatıyor. Diğer eliyle kanlı dolar atıyor. Doları alan insanlar bok içinde  tıpkı onun gibi balon olup uçmaya başlıyor.
+ 
+Sahne 8
+Kadirov daudov delimxanov balonları gökyüzünde yüzlerinde iğrenç ifadeler ağızlarından katran saçarak dans ediyor
+
+Sahne 10 
+Yüzleri maskeli balon polisler genç bir çeçeni kaçırıyor
+
+Siyah ekranda kırmızı yazıyla David and Goliath
+
+Sahne 11
+Yerde yatan öldürülmüş bir çocuk ve başında ak 47 ile bekleyen balon polis
+
+Siyah ekranda kırmızı yazıyla David and Goliath
+
+Sahne 12 
+
+Yaşlı bir çeçen kadın balon polisler dövüyor
+
+Siyah ekranda kırmızı yazıyla David and Goliath
+
+Sahne 13 gazeteci anna politskaya kalemiyle balonları patlatıyor
+
+ Siyah ekranda kırmızı yazıyla David and Goliath
+
+Sahne 8
+Dondurmacı tezgahında başı fesli emir şahin bu sefer balon kadirovun elinde pompa görünce gözlerinden kalp çıkıp domalıyor balon ramzan onu şişirip balonlaştırmaya başlıyor.
+
+Sahne 9
+Emir şahin balonu elinde dolar dolu çantalar medet önlü dağ halinin yanında semalarında uçuyor kanlı dolarlar atıyor. Medet dağı sinirle ona bakıyor.
+
+Sahne 10
+
+Başka balonlar emir şahine katılıyor
+
+Sahne 11 
+Kafkasyada dudayev, mashadov, mansur vs dağları eteklerindeki sinmiş insanlar dayanamayıp dağlardan taşlar kopararak sapanlarla balon askerlere fırlatıyor balonlar bir bir patlıyor
+
+Sahne 12 
+Türkiyede kızıl saçlı bir çocuk önce yakın çekim düşünceli sonra yüzünde bir anda öfke beliriyor, tüm bedeni gözükür çekimde medet dağından taşlar kopararak sapanla balonları vurmaya başlıyor. 
+ 
+
+Sahne 13 
+Cahar şamil maskhadov baysangur dağları etrafındaki sapanlı insanlar bir araya toplanıyor toplandıkça kalabalık insan formu tek bir kurta dönüşüyor ve kadirov ve kalan tüm balonları tek pençe atışıyla patlatıyor. Tavuk tüyleri havada uçuşuyor 
+
+Sahne 14
+Balon ayı kostümü giymiş putin balonun havasını indirip normal hale dönüyor ve kurta bakıp korkuyla sırıtıyor
+
+Final
+Daktilo yazısı ve seslendirme ile kamu spotu
+ 1. Spot
+Plastik doğaya ve vatanınıza zararlıdır. Bir gün patlayacak plastik balonlar olmayın.
+
+1. Spot
+Milletleri oluşturan temel yapı taşlarından vazgeçerseniz o milletten olma iddianızdan vazgeçmişsiniz demektir.
+Bu milletin  tüm vatanını zapt etseniz dahi anıt dağlar gibi yükselmek sizin için hayaldir. Ancak bir balon gibi hızla şişer, uçar ve patlayıp gidersiniz. bana tek seferde hatasız böyle bir video üretecek sistem`;
+
+test("raw Balonlar ve Dağlar script parses uncolon headers, David and Goliath red cards, and both public service spots", () => {
+  const scenes = planScenes(USER_BALONLAR_SCRIPT, "Sinematik", "/images/mountains.jpg");
+  assert.equal(scenes.length, 26);
+  const redCards = scenes.filter((scene) => scene.kind === "title" && scene.description.includes("David and Goliath"));
+  assert.equal(redCards.length, 4, "all four David and Goliath intertitles become separate title cards");
+  const politkovskaya = scenes.find((scene) => scene.description.includes("anna politskaya"));
+  assert.ok(politkovskaya, "Sahne 13 without colon is parsed as its own scene");
+  assert.equal(politkovskaya.kind, "video");
+  const spots = scenes.filter((scene) => scene.title.includes("Spot"));
+  assert.equal(spots.length, 2, "both Final public service spots are separated");
+  assert.ok(spots.every((spot) => spot.kind === "title" && spot.narration.length > 20));
+  assert.doesNotMatch(spots[1].narration, /bana tek seferde/, "trailing prompt request is stripped");
+});
