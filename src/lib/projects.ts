@@ -8,6 +8,7 @@ import { projectMediaDirectory } from "./media";
 import { ASSISTANT_SCENE_FIELDS, assistantInstructions, parseAssistantReply } from "./assistant";
 import { approvedCharacterSheets, continuityFrame, frameIsCurrent, frameKeys, keptClips, REPAIR_LABEL, REPAIR_MODEL, reusableClip } from "./production/reuse";
 import { voiceFile, voiceKey } from "./production/narration";
+import { PROMPT_PIPELINE_VERSION } from "./production/prompts";
 import { chooseFrameModel, frameModel } from "./routing/frame-router";
 import { DEFAULT_NARRATION, LOCAL_VOICE, narrationText, VOICE_LABEL, VOICE_MODEL } from "./voices";
 import { balonlarMasterTemplate, isBalonlarScript } from "./templates/balonlar-master";
@@ -70,7 +71,7 @@ const quoteSchema = z.object({
   errors: z.array(z.string()).max(40), warnings: z.array(z.string()).max(40).default([]), total: z.number().min(0), budget: z.number().min(0), committed: z.number().min(0), remaining: z.number(), withinBudget: z.boolean(),
 }).strict();
 const ledgerSchema = z.object({
-  id: idSchema, at: z.string().datetime(), runId: idSchema, sceneId: z.string().max(80), sceneTitle: z.string(), provider: z.literal("GMI"), kind: z.enum(["video", "image", "voice"]).default("video"), model: z.string(), modelLabel: z.string(),
+  id: idSchema, at: z.string().datetime(), runId: idSchema, sceneId: z.string().max(80), sceneTitle: z.string(), provider: z.enum(["GMI", "Higgsfield"]), kind: z.enum(["video", "image", "voice"]).default("video"), model: z.string(), modelLabel: z.string(),
   estimate: z.number().min(0), actual: z.number().min(0).nullable(), status: z.enum(["reserved", "submitted", "charged", "failed", "released"]), requestId: z.string().max(200).nullable(), note: z.string().max(500),
 }).strict();
 const projectRecordSchema = createProjectSchema.extend({
@@ -196,7 +197,7 @@ function quoteFingerprint(project: Pick<Project, "aspectRatio" | "quality" | "bu
     character.sheet.status, character.sheet.chosen, character.sheet.attempts.map((attempt) => attempt.id),
   ]);
   const material = JSON.stringify([
-    project.aspectRatio, project.quality, project.budget, project.genre ?? "", project.brief ?? "", project.narration ?? null, project.frameModel ?? null, characters,
+    PROMPT_PIPELINE_VERSION, project.aspectRatio, project.quality, project.budget, project.genre ?? "", project.brief ?? "", project.narration ?? null, project.frameModel ?? null, characters,
     project.scenes.map((scene) => [scene.id, scene.order, scene.kind, scene.duration, scene.motion, scene.videoModel, scene.prompt, scene.promptEn, scene.motionPrompt, scene.camera, scene.image, scene.frameKey, scene.narration, scene.emotions]),
   ]);
   return createHash("sha256").update(material).digest("hex");
@@ -231,7 +232,7 @@ export function buildQuote(
     // A frame made again in this run is a new file, so no clip of the old frame can stand in for it.
     let frameChanges = !frameIsCurrent(source, scene);
     if (frames?.enabled) {
-      const sheets = approvedCharacterSheets(source, scene).slice(0, 4);
+      const sheets = approvedCharacterSheets(source, scene);
       const hasSheets = sheets.length > 0;
       const title = hasSheets ? `${scene.title} (referanslı kare)` : `${scene.title} (kare)`;
       const references = sheets.length + (continuityFrame(source, scene) ? 1 : 0);
@@ -306,7 +307,7 @@ function pushEvent(run: NonNullable<StoredProject["run"]>, message: string, kind
 }
 
 function makeProject(input: CreateProjectInput, now: string): StoredProject {
-  return { ...input, genre: input.genre ?? "", look: input.look ?? "none", brief: input.brief ?? "", id: randomUUID(), description: input.script.trim().slice(0, 160), duration: 0, status: "draft", cover: "/images/mountains.jpg", createdAt: now, updatedAt: now, revision: 1, planner: "heuristic", planNote: "", characters: [], scenes: [], run: null, output: null, quality: "economy", quote: null, ledger: [], music: null, narration: DEFAULT_NARRATION, clips: [], frameModel: null, isExample: false };
+  return { ...input, genre: input.genre ?? "", look: input.look ?? "none", brief: input.brief ?? "", id: randomUUID(), description: input.script.trim().slice(0, 160), duration: 0, status: "draft", cover: "/images/mountains.jpg", createdAt: now, updatedAt: now, revision: 1, planner: "heuristic", planNote: "", characters: [], scenes: [], run: null, output: null, quality: "best", quote: null, ledger: [], music: null, narration: DEFAULT_NARRATION, clips: [], frameModel: null, isExample: false };
 }
 
 function seedDatabase(): Database {
@@ -492,8 +493,12 @@ export function createProjectRepository(directory: string, options: RepositoryOp
     finally { await handle.close(); }
     try {
       await rename(temporary, file);
-      const directoryHandle = await open(directory, "r");
-      try { await directoryHandle.sync(); } finally { await directoryHandle.close(); }
+      // Windows rejects fsync on a directory handle. The file was already flushed above;
+      // retain directory flushing on platforms that support it, without hiding file errors.
+      if (process.platform !== "win32") {
+        const directoryHandle = await open(directory, "r");
+        try { await directoryHandle.sync(); } finally { await directoryHandle.close(); }
+      }
     } finally { await unlink(temporary).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; }); }
   }
 
@@ -566,7 +571,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
    * Upgrades any video scene whose English prompt is missing or out of sync with `scene.prompt`.
    */
   async function enhanceScenesOutsideLock(
-    project: Pick<Project, "style" | "aspectRatio" | "genre" | "characters">,
+    project: Pick<Project, "style" | "aspectRatio" | "genre" | "characters"> & { brief?: string },
     scenes: Scene[],
   ): Promise<Map<string, { promptEn: string; promptEnSource: string; motionPrompt: string }>> {
     const updates = new Map<string, { promptEn: string; promptEnSource: string; motionPrompt: string }>();
@@ -578,6 +583,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
         style: project.style,
         aspectRatio: project.aspectRatio,
         genre: project.genre,
+        brief: project.brief,
         shots: pending.map((scene) => ({
           id: scene.id,
           title: scene.title,
@@ -585,6 +591,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
           prompt: scene.prompt,
           motionPrompt: scene.motionPrompt,
           camera: scene.camera,
+          duration: scene.duration,
           characters: project.characters
             .filter((character) => scene.characterIds.includes(character.id))
             .map((character) => ({ name: character.name, appearance: character.appearance, kind: character.kind })),
@@ -610,6 +617,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
   /** The one place a shot is edited. Returns whether the picture it describes changed, which makes any generated frame stale. */
   function applyScenePatch(project: StoredProject, scene: Scene, patch: ScenePatch): boolean {
     const changed = (patch.prompt !== undefined && patch.prompt !== scene.prompt) || (patch.description !== undefined && patch.description !== scene.description);
+    if (patch.camera !== undefined && patch.camera !== scene.camera && patch.motionPrompt === undefined) scene.motionPrompt = "";
     Object.assign(scene, patch);
     // A feeling only belongs to a person who is in this shot.
     scene.emotions = Object.fromEntries(Object.entries(scene.emotions ?? {}).filter(([who, feeling]) => feeling && scene.characterIds.includes(who) && project.characters.find((character) => character.id === who)?.kind !== "place"));
@@ -634,7 +642,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
     mediaDirectory,
     getBootstrap: async (): Promise<AppBootstrap> => {
       const status = await providers();
-      return transaction((database) => ({ projects: database.projects.toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(publicProject), models: modelCatalog(status), videoModels: VIDEO_MODELS.map(({ id, label, quality }) => ({ id, label, quality })), providers: status, storage: "local-file" as const }));
+      return transaction((database) => ({ projects: database.projects.toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(publicProject), models: modelCatalog(status), videoModels: VIDEO_MODELS.filter((model) => model.provider === "GMI" ? status.gmi : Boolean(status.higgsfield)).map(({ id, label, quality }) => ({ id, label, quality })), providers: status, storage: "local-file" as const }));
     },
     getProject: (id: string): Promise<Project> => transaction((database) => publicProject(find(database, id))),
     createProject: (input: CreateProjectInput): Promise<Project> => transaction((database) => {
@@ -705,7 +713,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
         plan = { planner: "heuristic", planNote: "", characters: [], scenes: planScenes(snapshot.script, snapshot.style, snapshot.cover) };
       }
       const enhanced = await enhanceScenesOutsideLock(
-        { style: snapshot.style, aspectRatio: snapshot.aspectRatio, genre: snapshot.genre, characters: plan.characters },
+        { style: snapshot.style, aspectRatio: snapshot.aspectRatio, genre: snapshot.genre, brief: snapshot.brief, characters: plan.characters },
         plan.scenes,
       );
       applySceneEnhancements(plan.scenes, enhanced);
@@ -867,7 +875,8 @@ export function createProjectRepository(directory: string, options: RepositoryOp
           const line = paidVideoLines.get(scene.id);
           if (!line) return [step("image", scene.id, imgPaid), step("clip", scene.id)];
           const ledgerId = randomUUID();
-          project.ledger.push({ id: ledgerId, at: now, runId, sceneId: scene.id, sceneTitle: scene.title, provider: "GMI", kind: "video", model: line.modelId, modelLabel: line.modelLabel, estimate: line.estimate, actual: null, status: "reserved", requestId: null, note: `${line.billedSeconds} sn için bütçeden ayrıldı.` });
+          const videoProvider = VIDEO_MODELS.find((model) => model.id === line.modelId)?.provider ?? "GMI";
+          project.ledger.push({ id: ledgerId, at: now, runId, sceneId: scene.id, sceneTitle: scene.title, provider: videoProvider, kind: "video", model: line.modelId, modelLabel: line.modelLabel, estimate: line.estimate, actual: null, status: "reserved", requestId: null, note: `${line.billedSeconds} sn için bütçeden ayrıldı.` });
           return [step("image", scene.id, imgPaid), step("video", scene.id, { ledgerId, model: line.modelId, requestId: null, submittedAt: null, unitCost: line.estimate, repairCost: 0, job: "generate" })];
         }
         if (target === "frames") steps = steps.filter((item) => item.kind === "image");
@@ -883,7 +892,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
         }
         const paidTotal = money([...paidImageLines.values(), ...paidVideoLines.values(), ...paidVoiceLines.values()].reduce((sum, line) => sum + line.estimate, 0));
         const message = quoteId
-          ? `Üretim başladı.${paidImageLines.size ? ` ${paidImageLines.size} çekim karesi GMI görsel modeli üzerinden üretilecek.` : ""}${paidVideoLines.size ? ` ${paidVideoLines.size} çekim GMI ile yapay zekâ videosuna dönüşecek.` : ""}${paidVoiceLines.size ? ` ${paidVoiceLines.size} çekimin dış sesi ${VOICE_LABEL} ile seslendirilecek.` : ""} Tahmini ${paidTotal.toFixed(2)} $ bütçeden ayrıldı.`
+          ? `Üretim başladı.${paidImageLines.size ? ` ${paidImageLines.size} çekim karesi GMI görsel modeli üzerinden üretilecek.` : ""}${paidVideoLines.size ? ` ${paidVideoLines.size} çekim ${new Set([...paidVideoLines.values()].map((line) => VIDEO_MODELS.find((model) => model.id === line.modelId)?.provider ?? "GMI")).size > 1 ? "GMI ve Higgsfield" : (VIDEO_MODELS.find((model) => model.id === [...paidVideoLines.values()][0]?.modelId)?.provider ?? "GMI")} ile yapay zekâ videosuna dönüşecek.` : ""}${paidVoiceLines.size ? ` ${paidVoiceLines.size} çekimin dış sesi ${VOICE_LABEL} ile seslendirilecek.` : ""} Tahmini ${paidTotal.toFixed(2)} $ bütçeden ayrıldı.`
           : status.nvidia
             ? "Ücretsiz üretim başladı. Görseller NVIDIA FLUX.2 Klein ile üretilip Nemotron VL ile kontrol edilecek ve tek filmde birleştirilecek. Ücretli istek gönderilmez."
             : "Ücretsiz üretim başladı. NVIDIA anahtarı olmadığı için çekimlerde mevcut referans görseller kullanılacak ve tek filmde birleştirilecek.";
@@ -959,6 +968,16 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       const { project, run, step } = active;
       const now = new Date().toISOString();
       const scene = project.scenes.find((item) => item.id === step.sceneId);
+      if (paidOnly && step.paid && (result.kind === "image" || result.kind === "video") && result.ledger && result.ledger.status !== "charged") {
+        const entry = ledgerEntry(project, step.paid.ledgerId);
+        if (entry) { entry.status = result.ledger.status; entry.note = result.ledger.note.slice(0, 500); entry.at = now; }
+        step.status = "failed"; step.leaseUntil = null; step.owner = null; step.note = result.note.slice(0, 500);
+        if (scene) scene.status = "failed";
+        stopRun(project, "failed", now);
+        pushEvent(run, `${scene?.title ?? "Çekim"}: üretim durdu. ${result.note}`, "warning");
+        project.updatedAt = now;
+        return true;
+      }
       step.status = "done"; step.leaseUntil = null; step.owner = null; step.note = result.note.slice(0, 500);
       if (result.kind === "image" && scene) {
         if (result.url !== scene.image) { scene.repair = null; scene.frameModel = result.frameModel ?? ""; }
@@ -1367,19 +1386,20 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       if (input.budget !== null && (!Number.isFinite(input.budget) || input.budget < 0 || input.budget > 100_000)) throw new AppError(400, "Bütçe 0 ile 100.000 USD arasında olmalı.");
       const snapshot = await transaction((database) => {
         const project = find(database, id); checkRevision(project, input.revision); requireIdle(project);
-        return { narration: project.narration, style: project.style, aspectRatio: project.aspectRatio, genre: project.genre, characters: structuredClone(project.characters), scenes: structuredClone(project.scenes) };
+        return { narration: project.narration, style: project.style, aspectRatio: project.aspectRatio, genre: project.genre, brief: project.brief, characters: structuredClone(project.characters), scenes: structuredClone(project.scenes) };
       });
       const narration = snapshot.narration;
       const target = input.target ?? "film";
       const referenceFrames = target === "frames" || paidOnly || Boolean(input.referenceFrames);
       const wantsVideo = target === "film" && (paidOnly || input.selections.some((selection) => selection.motion === "ai"));
       const wantsVoice = target === "film" && narration.engine === "gmi";
-      if (!(await providers()).gmi || (wantsVideo && !options.videoPrices) || (!wantsVideo && !referenceFrames && !wantsVoice && !options.videoPrices)) throw new AppError(400, "GMI anahtarı tanımlı değil; ücretli video için teklif alınamaz.");
+      const providerState = await providers();
+      if (((referenceFrames || wantsVoice) && !providerState.gmi) || (wantsVideo && !providerState.gmi && !providerState.higgsfield) || (wantsVideo && !options.videoPrices) || (!wantsVideo && !referenceFrames && !wantsVoice && !options.videoPrices)) throw new AppError(400, "GMI anahtarı veya gerekli video sağlayıcısı tanımlı değil; teklif alınamaz.");
       const voicePrice = wantsVoice && options.voicePrice ? await options.voicePrice().catch(() => null) : null;
       let prices: ReadonlyMap<string, PriceRule> = new Map();
       if (options.videoPrices && (wantsVideo || !referenceFrames)) {
         try { prices = await options.videoPrices(); }
-        catch (error) { throw new AppError(502, `GMI'dan güncel fiyatlar alınamadı; teklif verilmedi. ${error instanceof Error ? error.message : ""}`.trim()); }
+        catch (error) { throw new AppError(502, `Video sağlayıcısından güncel fiyatlar alınamadı; teklif verilmedi. ${error instanceof Error ? error.message : ""}`.trim()); }
       }
       // Without the frame router's live prices, Nano Banana 2.1 (the character-sheet model) is the only frame model offered.
       let framePrices: ReadonlyMap<string, number> | null = null;
@@ -1418,7 +1438,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       active.step.paid.submittedAt = new Date().toISOString();
       active.step.paid.job = job;
       const entry = ledgerEntry(active.project, active.step.paid.ledgerId);
-      if (entry) { entry.status = "submitted"; entry.note = "GMI'a gönderiliyor."; entry.at = active.step.paid.submittedAt; }
+      if (entry) { entry.status = "submitted"; entry.note = `${entry.provider}'a gönderiliyor.`; entry.at = active.step.paid.submittedAt; }
       return true;
     }),
     recordRequest: (projectId: string, runId: string, stepId: string, requestId: string): Promise<boolean> => transaction((database) => {
@@ -1426,7 +1446,7 @@ export function createProjectRepository(directory: string, options: RepositoryOp
       if (!active?.step.paid) return false;
       active.step.paid.requestId = requestId.slice(0, 200);
       const entry = ledgerEntry(active.project, active.step.paid.ledgerId);
-      if (entry) { entry.requestId = requestId.slice(0, 200); entry.note = active.step.kind === "video" ? "GMI isteği kuyrukta; video bekleniyor (genelde 5–6 dk sürer)." : active.step.paid.job === "repair" ? "GMI isteği kuyrukta; işaretli bölge yeniden çiziliyor." : "GMI isteği kuyrukta; görsel bekleniyor."; }
+      if (entry) { entry.requestId = requestId.slice(0, 200); entry.note = active.step.kind === "video" ? `${entry.provider} isteği kuyrukta; video bekleniyor.` : active.step.paid.job === "repair" ? `${entry.provider} isteği kuyrukta; işaretli bölge yeniden çiziliyor.` : `${entry.provider} isteği kuyrukta; görsel bekleniyor.`; }
       return true;
     }),
     /** Long provider jobs keep their lease while the worker that owns them is alive. */

@@ -1,4 +1,5 @@
-import { compileImagePrompt, compileScenePrompt, compileVideoPrompt } from "./production/prompts";
+import { compileImagePrompt, compileScenePrompt } from "./production/prompts";
+import { buildVideoRequest } from "./production/video-request";
 import { frameModel } from "./routing/frame-router";
 import { VIDEO_MODELS } from "./routing/video-router";
 import type { Character, Project, Scene } from "./types";
@@ -14,7 +15,7 @@ export interface ShotPreviewLine {
   sceneId: string;
   title: string;
   frame: { modelLabel: string; prompt: string; truncated: boolean; references: PreviewReference[] } | null;
-  video: { modelLabel: string; prompt: string; truncated: boolean } | null;
+  video: { modelLabel: string; prompt: string; truncated: boolean; provider: string; settings: Record<string, unknown> } | null;
   warnings: string[];
 }
 
@@ -66,9 +67,11 @@ export function buildShotPreview(project: Project): ShotPreviewLine[] {
     if (videoLine) {
       const spec = VIDEO_MODELS.find((model) => model.id === videoLine.modelId);
       if (spec) {
-        const compiled = compileVideoPrompt(project, scene, spec.maxPrompt);
-        video = { modelLabel: videoLine.modelLabel || spec.label, prompt: compiled.prompt, truncated: compiled.truncated };
-        if (compiled.truncated) warnings.push(`Video promptu ${spec.maxPrompt} karakter sınırına göre kısaltıldı.`);
+        try {
+          const request = buildVideoRequest(project, scene, spec);
+          video = { modelLabel: videoLine.modelLabel || spec.label, prompt: request.prompt, truncated: request.truncated, provider: request.provider, settings: request.settings };
+          if (request.truncated) warnings.push(`Video promptu ${spec.maxPrompt} karakter sınırına göre kısaltıldı; göndermeden önce tarifi kontrol edin.`);
+        } catch (error) { warnings.push(error instanceof Error ? error.message : "Video ayarları geçersiz; yeni teklif alın."); }
       }
     }
 

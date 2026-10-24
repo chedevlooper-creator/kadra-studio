@@ -14,5 +14,5 @@ export default defineConfig([
       "react-hooks/exhaustive-deps": "warn",
     },
   },
-  globalIgnores([".next/**", "out/**", "next-env.d.ts", ".data/**", "artifacts/**", "imports/**"]),
+  globalIgnores([".next/**", "out/**", "next-env.d.ts", ".data/**", "artifacts/**", "imports/**", "rea/**"]),
 ]);

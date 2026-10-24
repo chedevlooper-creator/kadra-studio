@@ -16,7 +16,8 @@ import { resolveFraming, type ResolvedFraming } from "../framing";
 import { GMI_VOICES, LOCAL_VOICE, narrationText, VOICE_LABEL, VOICE_MODEL } from "../voices";
 import { applySoundtrack, compositeRegion, concatClips, convertAudio, FfmpegError, fitImage, inspectAudio, inspectVideo, probeImage, renderImageClip, renderMask, renderTitleClip, renderVideoClip } from "./ffmpeg";
 import { narrationTracks, speakLocally, standInSettings, voiceCandidates, voiceFile, voiceKey } from "./narration";
-import { compileImagePrompt, compileScenePrompt, compileVideoPrompt, imagePrompt, issueInstruction, repairPrompt, sheetPrompt } from "./prompts";
+import { compileImagePrompt, compileScenePrompt, imagePrompt, issueInstruction, repairPrompt, sheetPrompt } from "./prompts";
+import { buildVideoRequest, productionSeed } from "./video-request";
 import { frameModel } from "../routing/frame-router";
 import { aiClipKey, approvedCharacterSheets, cameraClipKey, clipFile, continuityFrame, editSize, frameIsCurrent, frameKeys, keptClips, REPAIR_MODEL, repairRegions, reusableClip, titleClipKey } from "./reuse";
 
@@ -50,7 +51,7 @@ export interface WorkerOptions {
   /** Read at each step so a key added to .env.local is picked up without restarting a long-lived worker. */
   imageEngine: () => ImageEngine | null;
   /** Paid GMI jobs: reference-guided character sheets, image-to-video and region repairs. */
-  videoEngine?: () => VideoEngine | null;
+  videoEngine?: (model?: string) => VideoEngine | null;
   sheetJudge?: () => ((input: { image: Buffer; reference: Buffer | null; name: string; appearance: string; style: string; kind?: Character["kind"]; framing?: ResolvedFraming }) => Promise<SheetVerdict>) | null;
   /** Optional DeepSeek prompt enhancer so any unenhanced scene, character sheet or repair instruction is upgraded into English before model submission. */
   promptEnhancer?: () => WorkerPromptEnhancer | null;
@@ -95,15 +96,15 @@ export function createProductionWorker(options: WorkerOptions) {
   async function review(engine: ImageEngine | null, image: Buffer, expectation: string, characterSheets: { name: string; image: Buffer }[] = []): Promise<ImageReview | null> {
     if (!engine?.review) return null;
     try { return await engine.review({ image, expectation, characterSheets }); }
-    catch (error) { return { ok: true, note: `Görsel kontrolü yapılamadı (${failure(error).message}); görsel kabul edildi.`, issues: [] }; }
+    catch { return null; } // An unavailable review is not a successful review.
   }
 
-  async function loadCharacterSheets(project: Project, scene: Scene): Promise<{ character: Character; image: Buffer }[]> {
+  async function loadCharacterSheets(project: Project, scene: Scene, required = false): Promise<{ character: Character; image: Buffer }[]> {
     const directory = projectMediaDirectory(mediaRoot, project.id);
     const loaded: { character: Character; image: Buffer }[] = [];
-    for (const item of approvedCharacterSheets(project, scene).slice(0, 4)) {
+    for (const item of approvedCharacterSheets(project, scene)) {
       try { loaded.push({ character: item.character, image: await readFile(path.join(directory, item.file)) }); }
-      catch { /* Sheet file missing; skip rather than failing the shot. */ }
+      catch { if (required) throw new AppError(400, `${item.character.name}: onaylı referans dosyası bulunamadı; referans eksikken ücretli kare gönderilmedi.`); }
     }
     return loaded;
   }
@@ -117,6 +118,7 @@ export function createProductionWorker(options: WorkerOptions) {
         style: project.style,
         aspectRatio: project.aspectRatio,
         genre: project.genre,
+        brief: project.brief,
         shots: [{
           id: scene.id,
           title: scene.title,
@@ -124,12 +126,13 @@ export function createProductionWorker(options: WorkerOptions) {
           prompt: scene.prompt,
           motionPrompt: scene.motionPrompt,
           camera: scene.camera,
+          duration: scene.duration,
           characters: project.characters
             .filter((character) => scene.characterIds.includes(character.id))
             .map((character) => ({ name: character.name, appearance: character.appearance, kind: character.kind })),
         }],
       });
-      const hit = enhanced.find((item) => item.id === scene.id) ?? enhanced[0];
+      const hit = enhanced.find((item) => item.id === scene.id);
       if (hit?.imagePrompt) {
         return {
           ...scene,
@@ -216,13 +219,14 @@ export function createProductionWorker(options: WorkerOptions) {
       return { kind: "image", url: scene.image, source: "generated", review: scene.review, note: "Kare değişmediği için yeniden üretilmedi.", frameKey: scene.frameKey || initialKeys.flux };
     }
 
-    const activeScene = await ensureSceneEnhanced(project, scene);
+    // Paid prompts were prepared before quote approval; never rewrite them after approval.
+    const activeScene = step.paid ? scene : await ensureSceneEnhanced(project, scene);
     const keys = frameKeys(project, activeScene);
     const promptUpdates = activeScene.promptEn && activeScene.promptEn !== scene.promptEn
       ? { promptEn: activeScene.promptEn, promptEnSource: activeScene.promptEnSource, ...(activeScene.motionPrompt !== scene.motionPrompt ? { motionPrompt: activeScene.motionPrompt } : {}) }
       : {};
 
-    const sheets = await loadCharacterSheets(project, activeScene);
+    const sheets = await loadCharacterSheets(project, activeScene, Boolean(step.paid));
     const sheetRefs = sheets.map(({ character, image }) => ({ name: character.name, image }));
 
     // Paid reference-guided scene frame: approved character sheets and location plates (and, for the same place, the
@@ -232,6 +236,7 @@ export function createProductionWorker(options: WorkerOptions) {
       const spec = frameModel(paid.model) ?? frameModel(REFERENCE_MODEL)!;
       const gmi = options.videoEngine?.() ?? null;
       const fallbackFrame = async (reason: string, ledger: { status: "failed" | "released"; note: string }): Promise<StepResult> => {
+        if (paidOnly) return { kind: "image", url: scene.image, source: scene.imageSource, review: scene.review, note: reason, ledger };
         if (scene.imageSource === "generated") return { kind: "image", url: scene.image, source: "generated", review: scene.review, note: `${reason} Mevcut kare korundu.`, ...promptUpdates, ledger };
         if (!engine) return { kind: "image", url: scene.image, source: scene.imageSource, review: null, note: `${reason} Mevcut referans görsel kullanıldı.`, ...promptUpdates, ledger };
         const generated = await engine.generate({ prompt: imagePrompt(project, activeScene), aspectRatio: project.aspectRatio, seed: seedFor(`${scene.id}:${runId}`, step.attempts) });
@@ -246,8 +251,9 @@ export function createProductionWorker(options: WorkerOptions) {
         if (paid.submittedAt) return fallbackFrame("Önceki kare gönderiminin sonucu belirsiz; yeniden gönderilmedi.", { status: "failed", note: "Gönderim sırasında bağlantı koptu; GMI'da iş oluşmuş olabilir." });
         if (!gmi) return fallbackFrame("GMI bağlantısı bulunamadı.", { status: "released", note: "İstek gönderilmedi; ayrılan tutar bütçeye döndü." });
         const previous = continuityFrame(project, activeScene);
-        const previousImage = previous ? await readFile(resolveImageFile(previous, { publicDirectory: options.publicDirectory, mediaDirectory: mediaRoot })).catch(() => null) : null;
-        const references = [...sheets.map((item) => item.image).slice(0, spec.maxReferences - (previousImage ? 1 : 0)), ...(previousImage ? [previousImage] : [])];
+        const previousImage = previous ? await readFile(resolveImageFile(previous, { publicDirectory: options.publicDirectory, mediaDirectory: mediaRoot })) : null;
+        if (sheets.length + (previousImage ? 1 : 0) > spec.maxReferences) throw new AppError(400, `${spec.label} referans sınırı aşıldı; daha fazla referans destekleyen model seçin.`);
+        const references = [...sheets.map((item) => item.image), ...(previousImage ? [previousImage] : [])];
         const imageUrls = await Promise.all(references.map((image) => gmi.upload(image, image[0] === 0x89 ? "png" : "jpg")));
         if (!(await options.repository.markSubmitting(project.id, runId, step.id))) throw new AppError(409, "Üretim durdurulduğu için istek gönderilmedi.");
         try {
@@ -259,7 +265,7 @@ export function createProductionWorker(options: WorkerOptions) {
             prompt: compiled.prompt,
             imageUrls,
             aspectRatio: project.aspectRatio,
-            seed: seedFor(`${scene.id}:${runId}`, 0),
+            seed: productionSeed(JSON.stringify([spec.id, scene.id, compiled.prompt, project.aspectRatio])),
           }));
         } catch (error) {
           const { message, retryable } = failure(error);
@@ -339,35 +345,33 @@ export function createProductionWorker(options: WorkerOptions) {
     const image = resolveImageFile(scene.image, { publicDirectory: options.publicDirectory, mediaDirectory: mediaRoot });
     await access(image).catch(() => { throw new AppError(400, `${scene.title} için görsel dosyası bulunamadı.`); });
     const fallback = async (note: string, ledger: { status: "failed" | "released"; note: string }): Promise<StepResult> => {
+      if (paidOnly) return { kind: "video", note, ledger };
       await cameraClip(project, scene, path.join(clipsDirectory(project.id), clipFile(scene.id, cameraClipKey(project, scene))));
       return { kind: "video", note, ledger };
     };
-    const engine = options.videoEngine?.() ?? null;
-    let activeScene = scene;
-    let promptUpdates: { promptEn?: string; promptEnSource?: string; motionPrompt?: string } = {};
+    const engine = options.videoEngine?.(paid.model) ?? null;
+    const provider = spec?.provider ?? "GMI";
+    const activeScene = scene;
     let requestId = paid.requestId;
     if (!requestId) {
-      if (paid.submittedAt) return fallback("Önceki gönderimin sonucu belirsiz; çift ücret olmaması için yeniden gönderilmedi.", { status: "failed", note: "Gönderim sırasında bağlantı koptu; GMI'da iş oluşmuş ve ücretlendirilmiş olabilir. Konsoldan kontrol edin." });
-      if (!engine || !spec) return fallback("GMI bağlantısı kullanılamadığı için ücretsiz kamera hareketi kullanıldı.", { status: "released", note: "İstek gönderilmedi; ayrılan tutar bütçeye döndü." });
-      activeScene = await ensureSceneEnhanced(project, scene);
-      if (activeScene.promptEn && activeScene.promptEn !== scene.promptEn) {
-        promptUpdates = { promptEn: activeScene.promptEn, promptEnSource: activeScene.promptEnSource, ...(activeScene.motionPrompt !== scene.motionPrompt ? { motionPrompt: activeScene.motionPrompt } : {}) };
-      }
+      if (paid.submittedAt) return fallback("Önceki gönderimin sonucu belirsiz; çift ücret olmaması için yeniden gönderilmedi.", { status: "failed", note: `Gönderim sırasında bağlantı koptu; ${provider} tarafında iş oluşmuş ve ücretlendirilmiş olabilir. Konsoldan kontrol edin.` });
+      if (!engine || !spec) return fallback(`${provider} bağlantısı kullanılamıyor.`, { status: "released", note: "İstek gönderilmedi; ayrılan tutar bütçeye döndü." });
+      buildVideoRequest(project, activeScene, spec); // Validate before uploading or reserving submission.
       const imageUrl = await engine.upload(await readFile(image), image.endsWith(".png") ? "png" : "jpg");
+      const request = buildVideoRequest(project, activeScene, spec, imageUrl);
       if (!(await options.repository.markSubmitting(project.id, runId, step.id))) throw new AppError(409, "Üretim durdurulduğu için istek gönderilmedi.");
-      const duration = spec.durations.find((value) => value >= activeScene.duration) ?? spec.durations[spec.durations.length - 1];
       try {
-        requestId = await engine.submit(spec.id, spec.payload({ prompt: compileVideoPrompt(project, activeScene, spec.maxPrompt).prompt, imageUrl, duration, aspectRatio: project.aspectRatio, seed: seedFor(`${activeScene.id}:${runId}`, 0), camera: cameraMove(activeScene.camera).id }));
+        requestId = await engine.submit(spec.id, request.payload);
       } catch (error) {
         const { message, retryable } = failure(error);
         // A clear rejection created no job; a lost connection may have.
         return retryable
-          ? fallback("GMI'a gönderimin sonucu belirsiz; yeniden gönderilmedi.", { status: "failed", note: `Belirsiz gönderim: ${message} Konsoldan kontrol edin.` })
-          : fallback(`GMI isteği reddetti: ${message}`, { status: "released", note: `Reddedildi: ${message} İş oluşmadı.` });
+          ? fallback(`${provider} gönderiminin sonucu belirsiz; yeniden gönderilmedi.`, { status: "failed", note: `Belirsiz gönderim: ${message} Konsoldan kontrol edin.` })
+          : fallback(`${provider} isteği reddetti: ${message}`, { status: "released", note: `Reddedildi: ${message} İş oluşmadı.` });
       }
       await options.repository.recordRequest(project.id, runId, step.id, requestId);
     }
-    if (!engine) return fallback("GMI bağlantısı kesildiği için video alınamadı.", { status: "failed", note: `İstek ${requestId} GMI'da tamamlanmış olabilir; konsoldan kontrol edin.` });
+    if (!engine) return fallback(`${provider} bağlantısı kesildiği için video alınamadı.`, { status: "failed", note: `İstek ${requestId} ${provider} tarafında tamamlanmış olabilir; konsoldan kontrol edin.` });
     const deadline = Date.now() + (options.videoTimeoutMs ?? 15 * 60_000);
     let heartbeat = Date.now();
     while (true) {
@@ -385,13 +389,12 @@ export function createProductionWorker(options: WorkerOptions) {
           await renderOnce(path.join(clipsDirectory(project.id), file), (output) => renderVideoClip({ input: raw, output, duration: scene.duration, aspectRatio: project.aspectRatio }));
         } finally { await rm(work, { recursive: true, force: true }); }
         return {
-          kind: "video", note: `${spec?.label ?? paid.model} ile üretildi.`, ledger: { status: "charged", note: `GMI isteği ${requestId} tamamlandı.` },
+          kind: "video", note: `${spec?.label ?? paid.model} ile üretildi.`, ledger: { status: "charged", note: `${provider} isteği ${requestId} tamamlandı.` },
           clip: { sceneId: scene.id, key, file, model: paid.model, modelLabel: spec?.label ?? paid.model, cost: paid.unitCost },
-          ...promptUpdates,
         };
       }
       if (state?.state === "failed") return fallback(state.message, { status: "failed", note: `${state.message} Başarısız işlerin ücretlendirilip ücretlendirilmediğini konsoldan kontrol edin.` });
-      if (Date.now() > deadline) return fallback("GMI videoyu zamanında tamamlamadı.", { status: "failed", note: `Zaman aşımı: istek ${requestId} sonradan tamamlanmış ve ücretlendirilmiş olabilir.` });
+      if (Date.now() > deadline) return fallback(`${provider} videoyu zamanında tamamlamadı.`, { status: "failed", note: `Zaman aşımı: istek ${requestId} sonradan tamamlanmış ve ücretlendirilmiş olabilir.` });
       if (Date.now() - heartbeat > 60_000) { await options.repository.extendLease(project.id, runId, step.id, owner, LEASE_MS); heartbeat = Date.now(); }
       await sleep(options.pollIntervalMs ?? 5_000);
     }

@@ -248,9 +248,9 @@ export default function CreationStudio({ view, launch, projects, providers, vide
       </label>
       <label className="hf-select-control">
         <select aria-label="Kalite katmanı" value={draft.quality} onChange={(event) => update("quality", event.target.value as StudioDraft["quality"])}>
-          <option value="economy">720p · Ekonomi</option>
-          <option value="balanced">1080p · Dengeli</option>
-          <option value="best">4K / Pro · En yüksek</option>
+          <option value="economy">Ekonomik</option>
+          <option value="balanced">Dengeli</option>
+          <option value="best">Kalite öncelikli</option>
         </select>
         <ChevronDown size={12} />
       </label>

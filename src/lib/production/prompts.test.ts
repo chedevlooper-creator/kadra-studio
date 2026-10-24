@@ -2,6 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Character, Project, Scene } from "../types";
 import { compileImagePrompt, compileScenePrompt, compileVideoPrompt } from "./prompts";
+import { parseEnhancedShots } from "../providers/deepseek";
+
+test("enhancement results cannot replace another shot or overwrite an id twice", () => {
+  const shots = parseEnhancedShots(JSON.stringify({ shots: [
+    { id: "wrong-id", image_prompt: "Wrong scene" },
+    { id: "s1", image_prompt: "Correct scene" },
+    { id: "s1", image_prompt: "Duplicate scene" },
+  ] }), ["s1"]);
+  assert.deepEqual(shots, [{ id: "s1", imagePrompt: "Correct scene", motionPrompt: "" }]);
+});
 
 const character: Character = {
   id: "c1", framing: "auto", kind: "person", name: "Ada", appearance: "kırmızı pelerin", aliases: ["Ada"], style: "", reference: null,
@@ -64,6 +74,30 @@ test("video and text-only frame prompts respect their own budgets", () => {
   const frame = compileImagePrompt(project, long, 400);
   assert.ok(frame.prompt.length <= 400);
   assert.ok(frame.prompt.endsWith("no text, no captions, no watermark"));
+});
+
+test("long motion and reference descriptions cannot erase the action or standing directions", () => {
+  const source = { ...project, brief: "Keep the red umbrella closed" };
+  const directed = { ...scene, prompt: "Ada puts the red umbrella on the bench", motionPrompt: "Raindrops fall along the windows. ".repeat(120) };
+  const video = compileVideoPrompt(source, directed, 800);
+  assert.match(video.prompt, /Ada puts the red umbrella on the bench/);
+  assert.match(video.prompt, /Keep the red umbrella closed/);
+  assert.ok(video.truncated && video.prompt.length <= 800);
+  const frame = compileScenePrompt(source, directed, [{ ...character, appearance: "ornate details ".repeat(200) }], true, 800);
+  assert.match(frame.prompt, /Ada puts the red umbrella on the bench/);
+  assert.match(frame.prompt, /Reference image 1/);
+  assert.match(frame.prompt, /Reference image 2/);
+  assert.ok(frame.prompt.length <= 800);
+});
+
+test("selected camera wins over an old directive without forcing smooth motion on handheld shots", () => {
+  const directed = { ...scene, camera: "El kamerası", motionPrompt: "Camera: smooth pan to the left. Ada raises her hand" };
+  const compiled = compileVideoPrompt(project, directed);
+  assert.match(compiled.prompt, /^Camera: handheld camera with subtle natural shake/);
+  assert.match(compiled.prompt, /Ada raises her hand/);
+  assert.doesNotMatch(compiled.prompt, /pan to the left|Smooth cinematic motion/);
+  const up = compileVideoPrompt(project, { ...scene, camera: "Yukarı kaydırma", motionPrompt: "The camera observes Ada running" });
+  assert.match(up.prompt, /camera tilts and rises upward/);
 });
 
 test("background-enhanced English prompt (promptEn) is used while synced and invalidated on edit", () => {

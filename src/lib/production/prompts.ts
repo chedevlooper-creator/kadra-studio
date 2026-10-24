@@ -4,6 +4,9 @@ import type { Character, Project, ReviewIssue, Scene } from "../types";
 
 type PromptProject = Pick<Project, "characters" | "style"> & { genre?: string; brief?: string };
 
+/** Invalidates quotes made with a different prompt/payload contract. */
+export const PROMPT_PIPELINE_VERSION = 2;
+
 /**
  * Translates raw Turkish political-satire metaphors that could trigger upstream image/video provider safety refusals
  * into safe, high-adherence editorial political-cartoon visual descriptions, while leaving ordinary prompts untouched.
@@ -48,13 +51,16 @@ export function effectiveScenePrompt(scene: Pick<Scene, "prompt"> & Partial<Pick
  */
 export function effectiveMotionPrompt(scene: Pick<Scene, "prompt" | "camera" | "motionPrompt"> & Partial<Pick<Scene, "promptEnSource">>): string {
   const cam = cameraPhrase(scene as Scene);
+  const action = motionAction(scene);
+  return action ? `${cam}. ${action}` : cam;
+}
+
+function motionAction(scene: Pick<Scene, "prompt" | "camera" | "motionPrompt"> & Partial<Pick<Scene, "promptEnSource">>): string {
   const synced = !scene.promptEnSource || scene.promptEnSource === scene.prompt;
   const rawMotion = synced ? scene.motionPrompt?.trim() ?? "" : "";
-  if (!rawMotion) return cam;
-  const move = cameraMove(scene.camera);
-  const moveKeywords = move.prompt.toLowerCase().split(/[,\s]+/).filter((word) => word.length >= 4);
-  const alreadyMentionsCamera = moveKeywords.some((word) => rawMotion.toLowerCase().includes(word));
-  return alreadyMentionsCamera ? rawMotion : `${cam}. ${rawMotion}`;
+  // Replace a previously compiled camera directive; a word such as "camera" or "subject"
+  // alone is not evidence that the currently selected movement is already present.
+  return rawMotion.replace(/^Camera:\s*[^.!?]+[.!?]?\s*/i, "").replace(cameraMove(scene.camera).prompt, "").replace(/^[.,;\s]+/, "").trim();
 }
 
 /** True when `text` already contains a description of `character` (by name or a key appearance phrase). */
@@ -98,7 +104,7 @@ function cameraPhrase(scene: Scene): string {
 export interface CompiledPrompt { prompt: string; truncated: boolean }
 
 const FRAME_TAIL = "cinematic composition, high detail, no text, no captions, no watermark";
-const VIDEO_TAIL = "Smooth cinematic motion, consistent lighting, no text, no subtitles, no watermark";
+const VIDEO_TAIL = "Preserve the first frame's visual style and subject identity, coherent motion, no text, no subtitles, no watermark";
 
 function trimToWordBoundary(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text.replace(/\.+$/, "").trim();
@@ -148,10 +154,29 @@ function fitPrompt(sections: (string | false | undefined)[], tail: string, maxCh
   return { prompt: prompt.slice(0, maxChars), truncated: true };
 }
 
+/** Reserves space for each essential instruction before spending any on decorative detail. */
+function fitDirectedPrompt(core: [string, number][], details: (string | false | undefined)[], tail: string, maxChars: number): CompiledPrompt {
+  const essential = core.map(([text, weight]) => [sanitizeSatirePrompt(text.trim()).replace(/\.+$/, ""), weight] as const).filter(([text]) => text);
+  const budget = Math.max(0, maxChars - tail.length - 2 * essential.length);
+  if (essential.reduce((sum, [text]) => sum + text.length, 0) <= budget) {
+    return fitPrompt([...essential.map(([text]) => text), ...details], tail, maxChars);
+  }
+  const weight = essential.reduce((sum, [, value]) => sum + value, 0);
+  const limits = essential.map(([text, value]) => Math.min(text.length, Math.floor(budget * value / weight)));
+  let spare = budget - limits.reduce((sum, value) => sum + value, 0);
+  // Short camera directives leave their unused share to the scene, then the remaining instructions.
+  for (let index = 0; index < essential.length && spare > 0; index++) {
+    const extra = Math.min(spare, essential[index][0].length - limits[index]);
+    limits[index] += extra; spare -= extra;
+  }
+  const result = fitPrompt(essential.map(([text], index) => trimToWordBoundary(text, limits[index])), tail, maxChars);
+  return { ...result, truncated: true };
+}
+
 export function compileVideoPrompt(project: PromptProject, scene: Scene, maxChars = 1_900): CompiledPrompt {
   const linked = project.characters.filter((character) => scene.characterIds.includes(character.id));
   const main = effectiveScenePrompt(scene);
-  const motion = effectiveMotionPrompt(scene);
+  const motion = motionAction(scene);
   const formatCast = (kind: Character["kind"], limit: number) => linked
     .filter((character) => (character.kind ?? "person") === kind)
     .map((character) => {
@@ -185,15 +210,14 @@ export function compileVideoPrompt(project: PromptProject, scene: Scene, maxChar
     people = formatCast("person", 0);
     places = formatCast("place", 0);
   }
-  return fitPrompt([
-    motion,
-    main,
+  return fitDirectedPrompt([
+    [cameraPhrase(scene), 1], [main, 5], [motion, 3], [briefText, 2],
+  ], [
     emotionText,
     people && `Keep these characters exactly as they appear in the first frame: ${people}`,
     places && `Keep the location as it appears in the first frame: ${places}`,
     styleText,
     moodText,
-    briefText,
   ], VIDEO_TAIL, maxChars);
 }
 
@@ -249,7 +273,7 @@ export function compileImagePrompt(project: PromptProject, scene: Scene, maxChar
     .join("; ");
   const people = missingNotes("person");
   const places = missingNotes("place");
-  return fitPrompt([main, feelings(project, scene), people && `Characters: ${people}`, places && `Location: ${places}`, styleHint(project, scene), moodHint(project), briefHint(project)], FRAME_TAIL, maxChars);
+  return fitDirectedPrompt([[main, 5], [briefHint(project), 2]], [feelings(project, scene), people && `Characters: ${people}`, places && `Location: ${places}`, styleHint(project, scene), moodHint(project)], FRAME_TAIL, maxChars);
 }
 
 export function imagePrompt(project: PromptProject, scene: Scene): string {
@@ -281,12 +305,11 @@ export function compileScenePrompt(project: PromptProject, scene: Scene, referen
   if (totalWith(refs) > maxChars) {
     refs = formatRefs(0);
   }
-  return fitPrompt([
-    refs,
-    continuityLine,
-    sceneLine,
+  return fitDirectedPrompt([
+    [sceneLine, 5], [refs, 3], [briefHint(project), 2], [continuityLine, 1],
+  ], [
     feelings(project, scene),
-    styleHint(project, scene), moodHint(project), briefHint(project),
+    styleHint(project, scene), moodHint(project),
   ], FRAME_TAIL, maxChars);
 }
 

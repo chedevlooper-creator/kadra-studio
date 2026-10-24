@@ -1,5 +1,6 @@
 import { REPAIR_MODEL } from "../production/reuse";
-import { getModelInfo, type GmiModelInfo } from "../providers/gmi";
+import { getModelInfo, gmiConfigured, type GmiModelInfo } from "../providers/gmi";
+import { higgsfieldConfigured } from "../providers/higgsfield";
 import { ProviderError } from "../providers/nvidia";
 import { GMI_VOICES, VOICE_MODEL } from "../voices";
 import { FRAME_MODELS, framePrice } from "./frame-router";
@@ -11,7 +12,12 @@ let cache: { at: number; prices: Map<string, PriceRule> } | null = null;
 /** Live GMI prices for every routable model; a model whose price cannot be read is simply not offered. */
 export async function loadVideoPrices(): Promise<ReadonlyMap<string, PriceRule>> {
   if (cache && Date.now() - cache.at < TTL_MS) return cache.prices;
-  const entries = await Promise.all(VIDEO_MODELS.map(async (model) => {
+  const entries = await Promise.all(VIDEO_MODELS.filter((model) => model.provider === "GMI" ? gmiConfigured() : higgsfieldConfigured()).map(async (model) => {
+    if (model.provider === "Higgsfield") {
+      // Higgsfield publishes Seedance 2.5 from $0.206/s at list price. Use the list rate
+      // (not a promotional maximum discount) so quotes do not depend on account-specific offers.
+      return [model.id, { perSecond: 0.206, perRequest: null }] as const;
+    }
     try {
       const rule = priceRule(await getModelInfo(model.id), model.priceKey, model);
       return rule ? [model.id, rule] as const : null;

@@ -7,7 +7,7 @@ export type SceneKind = "video" | "title";
 export type PlannerKind = "heuristic" | "nemotron" | "deepseek" | "import";
 export type ImageSource = "reference" | "generated";
 export type QualityTier = "economy" | "balanced" | "best";
-/** "free" = FFmpeg camera move on the frame; "ai" = paid image-to-video through GMI. */
+/** "free" = FFmpeg camera move on the frame; "ai" = paid image-to-video through a configured provider. */
 export type MotionMode = "free" | "ai";
 
 /** A real photo the user picked as the basis of a character; its source and licence travel with it. */
@@ -256,7 +256,7 @@ export interface LedgerEntry {
   runId: string;
   sceneId: string;
   sceneTitle: string;
-  provider: "GMI";
+  provider: "GMI" | "Higgsfield";
   kind: "video" | "image" | "voice";
   model: string;
   modelLabel: string;
@@ -367,7 +367,7 @@ export interface CreateProjectInput {
 export interface ModelProfile {
   id: string;
   name: string;
-  provider: "NVIDIA" | "FFmpeg" | "GMI" | "DeepSeek" | "Yerel";
+  provider: "NVIDIA" | "FFmpeg" | "GMI" | "Higgsfield" | "DeepSeek" | "Yerel";
   type: "planning" | "image" | "review" | "video" | "graphics";
   description: string;
   tags: string[];
@@ -378,6 +378,7 @@ export interface ModelProfile {
 export interface ProviderStatus {
   nvidia: boolean;
   gmi: boolean;
+  higgsfield?: boolean;
   ffmpeg: boolean;
   deepseek?: boolean;
 }

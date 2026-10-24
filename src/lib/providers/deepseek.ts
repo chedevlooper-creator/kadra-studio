@@ -267,6 +267,7 @@ export interface ShotEnhanceItem {
   prompt: string;
   motionPrompt?: string;
   camera?: string;
+  duration?: number;
   characters?: { name: string; appearance: string; kind?: "person" | "place" }[];
 }
 
@@ -274,6 +275,7 @@ export interface PromptEnhanceRequest {
   style: string;
   aspectRatio: AspectRatio;
   genre?: string;
+  brief?: string;
   shots: ShotEnhanceItem[];
 }
 
@@ -292,6 +294,7 @@ export function parseEnhancedShots(content: string, requestedIds: string[] = [])
         ? [raw]
         : [];
     const results: EnhancedShot[] = [];
+    const allowed = new Set(requestedIds);
     list.forEach((item, index) => {
       if (!item || typeof item !== "object") return;
       const entry = item as Record<string, unknown>;
@@ -300,7 +303,7 @@ export function parseEnhancedShots(content: string, requestedIds: string[] = [])
         : requestedIds[index] ?? "";
       const imagePrompt = (typeof entry.image_prompt === "string" ? entry.image_prompt : typeof entry.imagePrompt === "string" ? entry.imagePrompt : "").trim().slice(0, 2_500);
       const motionPrompt = (typeof entry.motion_prompt === "string" ? entry.motion_prompt : typeof entry.motionPrompt === "string" ? entry.motionPrompt : "").trim().slice(0, 900);
-      if (id && imagePrompt) results.push({ id, imagePrompt, motionPrompt });
+      if (id && imagePrompt && (!allowed.size || allowed.has(id)) && !results.some((shot) => shot.id === id)) results.push({ id, imagePrompt, motionPrompt });
     });
     return results;
   } catch {
@@ -318,16 +321,19 @@ async function enhanceShotBatch(input: PromptEnhanceRequest): Promise<EnhancedSh
     user_prompt: shot.prompt,
     motion_hint: shot.motionPrompt ?? "",
     camera: shot.camera ?? "",
+    duration_seconds: shot.duration ?? null,
     cast_and_locations: (shot.characters ?? []).map((item) => `${item.name} (${item.kind === "place" ? "location" : "character"}): ${item.appearance}`),
   }));
   const prompt = `Sen dünyaca ünlü bir görüntü yönetmeni (DoP) ve yapay zekâ görsel/video prompt mühendisisin.
 Kullanıcı çekim açıklamalarını veya promptlarını günlük konuşma diliyle, kısa, devrik veya yazım hatalı Türkçe (ya da karışık Türkçe/İngilizce) yazmış olabilir.
-Görevin: Her çekimi arka planda görsel ve video üretim modellerinin tek seferde muhteşem, sinematik bir çıktı üreteceği profesyonel İngilizce promptlara dönüştürmek.
+Görevin: Her çekimi kullanıcının istediğine sadık, açık ve uygulanabilir İngilizce görsel ve hareket tariflerine dönüştürmek.
 
 Kurallar:
 - Kullanıcının istediği sahneyi, olayı, duygusal tonu ve bağlı karakter/mekân özelliklerini birebir koru; senaryoda olmayan alakasız olay uydurma.
-- image_prompt: Yalnızca İngilizce. Konuyu, karakterlerin duruş ve yüz ifadesini, mekân detaylarını, kamera açısını ve lens derinliğini (ör. 35mm anamorphic, shallow depth of field), ışık yönünü ve rengini (ör. volumetric golden hour rim light, moody chiaroscuro), atmosferi ve dokuları zengin bir sinema diliyle betimle. Görsel stil: "${input.style}", kadraj oranı: ${input.aspectRatio}.${chosen.id ? ` Tür: ${chosen.label} (${chosen.mood}).` : ""}
-- motion_prompt: Yalnızca İngilizce, 1-2 cümle. Kamera hareketini ve karedeki doğal fiziksel hareketi (rüzgâr, adım, bakış, ışık değişimi) akıcı biçimde tarif et.
+- image_prompt: Yalnızca İngilizce, tercihen 600-1200 karakter. Tek bir başlangıç karesini tarif et: özne, eylemin başlangıç duruşu, mekân, kompozisyon ve belirtilmiş ışık. Bir dizi olayı tek resme sıkıştırma. Görsel stil: "${input.style}", kadraj oranı: ${input.aspectRatio}.${chosen.id ? ` Tür: ${chosen.label} (${chosen.mood}).` : ""}
+- Kullanıcı istemediyse saat, hava, lens, alan derinliği, yeni nesne veya yeni olay icat etme. Geceyi altın saate, düz çizimi fotogerçekçi filme çevirme. Süslü sıfatları tekrarlamak yerine mekânsal ilişkileri netleştir.
+- motion_prompt: Yalnızca İngilizce, 1-2 kısa cümle, en fazla 450 karakter. Yalnızca öznenin ve çevrenin hareketini, kullanıcının istediği sırayla ve verilen süreye sığacak şekilde tarif et. Görünüşü yeniden betimleme. Kamera komutu ekleme; seçilen kamera hareketi kod tarafından ayrıca eklenecek. Kullanıcının hareket talimatını koru; statik sahneye sebepsiz yürüyüş veya rüzgâr ekleme.
+- Proje talimatları önceliklidir: ${input.brief?.trim() || "Ek talimat yok."}
 - Görsel içinde yazı, altyazı veya filigran isteme.
 
 Yalnızca şu JSON yapısını döndür, başka açıklama yazma:
@@ -353,8 +359,8 @@ export async function enhanceShotsWithDeepSeek(input: PromptEnhanceRequest): Pro
   const valid = input.shots.filter((shot) => shot.prompt.trim() || shot.description.trim());
   if (!valid.length) return [];
   const results: EnhancedShot[] = [];
-  for (let index = 0; index < valid.length; index += 10) {
-    const chunk = valid.slice(index, index + 10);
+  for (let index = 0; index < valid.length; index += 4) {
+    const chunk = valid.slice(index, index + 4);
     const enhanced = await enhanceShotBatch({ ...input, shots: chunk });
     results.push(...enhanced);
   }

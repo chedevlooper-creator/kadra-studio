@@ -9,8 +9,53 @@ import type { ImageReview, SheetVerdict } from "../types";
 import { findFfmpeg, renderImageClip } from "./ffmpeg";
 import { changeSoundtrack } from "./soundtrack";
 import { createProductionWorker, type ImageEngine, type VideoEngine } from "./worker";
+import { buildShotPreview } from "../preview";
 
 const publicDirectory = path.join(process.cwd(), "public");
+
+test("paid frames send the approved prompt unchanged and stop on provider failure without a draft substitute", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "kadra-approved-prompt-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const repository = createProjectRepository(directory, {
+    paidOnly: true,
+    providers: async () => ({ nvidia: false, gmi: true, ffmpeg: false }),
+    framePrices: async () => new Map([["hy-image-v3.5-preview", 0.04]]),
+  });
+  const created = await repository.createProject({ title: "Onaylı tarif", script: "Sahne 1: Kırmızı bir şemsiye bankın üzerinde durur.", style: "Flat illustration", aspectRatio: "16:9", budget: 1 });
+  const plan = await repository.planProject(created.id, created.revision, "heuristic");
+  const quoted = await repository.prepareQuote(plan.id, { target: "frames", revision: plan.revision, quality: "economy", budget: 1, selections: [] });
+  const approvedPrompt = buildShotPreview(quoted)[0].frame!.prompt;
+  await repository.startRun(plan.id, quoted.revision, "approved-frame-01", quoted.quote!.id, { target: "frames" });
+  let enhanceCalls = 0;
+  let fail = false;
+  const sent: Record<string, unknown>[] = [];
+  const worker = createProductionWorker({
+    repository, publicDirectory, paidOnly: true, imageEngine: () => null,
+    promptEnhancer: () => ({ enhanceScene: async () => { enhanceCalls++; return [{ id: plan.scenes[0].id, imagePrompt: "A different scene", motionPrompt: "A different motion" }]; } }),
+    videoEngine: () => ({
+      upload: async () => "https://storage.example/image.png",
+      submit: async (_model, payload) => { sent.push(payload); return `req-${sent.length}`; },
+      status: async () => fail ? { state: "failed", message: "Provider rejected the job" } : { state: "success", mediaUrl: "https://storage.example/result.jpg" },
+      download: () => readFile(path.join(publicDirectory, "images/mountains.jpg")),
+    }),
+    pollIntervalMs: 1, log: () => {},
+  });
+  await drain(worker);
+  const finished = await repository.getProject(plan.id);
+  assert.equal(finished.run?.status, "completed");
+  assert.equal(enhanceCalls, 0);
+  assert.equal(sent[0].prompt, approvedPrompt);
+  const edited = await repository.updateScene(plan.id, finished.scenes[0].id, finished.revision, { prompt: "A blue umbrella on the bench" });
+  const next = await repository.prepareQuote(plan.id, { target: "frames", revision: edited.revision, quality: "economy", budget: 1, selections: [] });
+  await repository.startRun(plan.id, next.revision, "approved-frame-02", next.quote!.id, { target: "frames" });
+  fail = true;
+  await drain(worker);
+  const stopped = await repository.getProject(plan.id);
+  assert.equal(stopped.run?.status, "failed");
+  assert.equal(stopped.scenes[0].image, edited.scenes[0].image);
+  assert.equal(stopped.ledger.at(-1)?.status, "failed");
+  assert.equal(sent.length, 2, "the failed paid job is never resubmitted");
+});
 const script = "Sahne 1: Sisli dağların arasında sabahın ilk ışığı görünür.\n\nFinal: Yazı kartı: Yol, \"ışığa\" doğru %100 devam eder.";
 
 async function setup(t: { after: (callback: () => Promise<void>) => void }) {

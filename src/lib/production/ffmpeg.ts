@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { cameraMove, type CameraMoveId } from "../cinema";
@@ -132,9 +132,11 @@ export async function renderTitleClip({ text, rawText, output, duration, aspectR
   const top = Math.round((height - lineHeight * lines.length) / 2);
   const work = await mkdtemp(path.join(os.tmpdir(), "kadra-title-"));
   try {
+    // A local filename avoids drive letters and quotes being parsed as filter options on Windows.
+    await copyFile(fontFile, path.join(work, "title-font.ttf"));
     // Each line comes from a file so quotes, colons and percent signs in the script are never parsed as filter syntax.
     await Promise.all(lines.map((line, index) => writeFile(path.join(work, `line-${index}.txt`), line)));
-    const draw = lines.map((_, index) => `drawtext=fontfile='${fontFile.replace(/'/g, "")}':textfile='line-${index}.txt':expansion=none:fontcolor=${style.fontColor}:fontsize=${fontSize}:x=(w-text_w)/2:y=${top + index * lineHeight}`);
+    const draw = lines.map((_, index) => `drawtext=fontfile='title-font.ttf':textfile='line-${index}.txt':expansion=none:fontcolor=${style.fontColor}:fontsize=${fontSize}:x=(w-text_w)/2:y=${top + index * lineHeight}`);
     const filter = [...draw, `fade=t=in:st=0:d=${FADE}`, `fade=t=out:st=${(duration - FADE).toFixed(2)}:d=${FADE}`, "format=yuv420p"].join(",");
     await mkdir(path.dirname(output), { recursive: true });
     await ffmpeg(["-f", "lavfi", "-i", `color=c=${style.backgroundColor}:s=${width}x${height}:r=${FPS}:d=${duration}`, "-vf", filter, "-frames:v", String(Math.round(duration * FPS)), ...ENCODE, "-an", path.resolve(output)], work);

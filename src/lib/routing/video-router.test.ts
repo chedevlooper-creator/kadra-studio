@@ -13,6 +13,7 @@ const samplePrices = new Map<string, PriceRule>([
   ["kling-v2-5-turbo", { perSecond: 0.07, perRequest: null }],
   ["veo-3.1-fast-generate-001", { perSecond: 0.1, perRequest: null }],
   ["kling-v3-image-to-video", { perSecond: 0.168, perRequest: null }],
+  ["hf-seedance-2.5-image-to-video", { perSecond: 0.206, perRequest: null }],
 ]);
 
 test("live price parsing uses the requested tier and never the lower of two conflicting numbers", () => {
@@ -53,7 +54,8 @@ test("the router never pays more than the cheapest model that satisfies the shot
   const tiers: QualityTier[] = ["economy", "balanced", "best"];
   for (let duration = 2; duration <= 16; duration += 1) for (const aspectRatio of ratios) for (const tier of tiers) {
     const result = chooseVideoModel({ duration, aspectRatio, tier, override: null }, samplePrices);
-    const eligible = VIDEO_MODELS.filter((model) => model.quality >= TIER_MIN_QUALITY[tier] && (model.aspectRatios === "any" || model.aspectRatios.includes(aspectRatio)));
+    const eligible = VIDEO_MODELS.filter((model) => model.quality >= TIER_MIN_QUALITY[tier] && model.durations.some((seconds) => seconds >= duration) && (model.aspectRatios === "any" || model.aspectRatios.includes(aspectRatio)));
+    if (!eligible.length) { assert.equal(result.ok, false); continue; }
     const cheapest = Math.min(...eligible.map((model) => {
       const billed = model.durations.find((value) => value >= duration) ?? model.durations[model.durations.length - 1];
       return Math.round(samplePrices.get(model.id)!.perSecond! * billed * 10_000) / 10_000;
@@ -61,6 +63,12 @@ test("the router never pays more than the cheapest model that satisfies the shot
     assert.ok(result.ok, `${duration}s ${aspectRatio} ${tier}`);
     assert.equal(result.choice.estimate, cheapest, `${duration}s ${aspectRatio} ${tier}`);
   }
+});
+
+test("a model cannot cover a long shot by silently freezing a shorter output", () => {
+  assert.ok(candidatesFor(16, "16:9", samplePrices).every((candidate) => candidate.billedSeconds >= 16));
+  const route = chooseVideoModel({ duration: 20, aspectRatio: "16:9", tier: "best", override: "kling-v3-image-to-video" }, samplePrices);
+  assert.equal(route.ok, false);
 });
 
 test("schemaMatches validates live GMI parameter names and enum casing against our payload adapter", () => {

@@ -160,14 +160,15 @@ export default function PaidMotionPanel({ project, providers, videoModels, disab
                 <p className="prompt-text">{line.frame.prompt}</p>
               </div> : null}
               {line.video ? <div>
-                <small>Video, {line.video.modelLabel}{line.video.truncated ? " (kısaltıldı)" : ""}</small>
+                <small>Video, {line.video.modelLabel} · {line.video.provider}{line.video.truncated ? " (kısaltıldı)" : ""}</small>
                 <p className="prompt-text">{line.video.prompt}</p>
+                <details><summary>Gönderilecek model ayarları</summary><pre className="prompt-text">{JSON.stringify(line.video.settings, null, 2)}</pre><p className="paid-note">Seed gösteriliyorsa aynı girdiler için sabittir. Modelin birebir aynı sonucu vermesi garanti değildir.</p></details>
               </div> : null}
               {line.warnings.map((warning) => <p key={warning} className="paid-errors"><TriangleAlert size={12} /> {warning}</p>)}
             </article>)}
           </div>
         </details> : null}
-        <p className="paid-note"><ShieldCheck size={13} /> Fiyatlar GMI&apos;ın canlı fiyatlarıdır; emin olunamayan durumda yüksek olan alınır. Sonucu belirsiz kalan bir istek asla ikinci kez gönderilmez.</p>
+        <p className="paid-note"><ShieldCheck size={13} /> GMI fiyatları canlı okunur; Higgsfield Seedance 2.5 için 480p liste fiyatı kullanılır. Sonucu belirsiz kalan bir istek ikinci kez gönderilmez.</p>
         <button type="button" className="button button-lamp" disabled={disabled || busy !== null || expired || !quote.withinBudget} onClick={() => void approve()}>{busy === "start" ? <LoaderCircle size={14} className="spin" /> : <Check size={14} />} {quote.withinBudget ? `Onayla ve üret, ${usd(quote.total)}` : "Bütçe ya da model uygun değil"}</button>
       </div> : quote && dirty ? <p className="paid-empty">Ayarlar değişti; fiyatı yenile.</p> : null}
     </>}

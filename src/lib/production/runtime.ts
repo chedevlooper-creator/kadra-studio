@@ -7,7 +7,9 @@ import {
   reviewImageWithDeepSeek,
 } from "../providers/deepseek";
 import { downloadMedia, getRequest, gmiConfigured, submitRequest, uploadImage } from "../providers/gmi";
+import { downloadMedia as downloadHiggsfieldMedia, getRequest as getHiggsfieldRequest, higgsfieldConfigured, submitRequest as submitHiggsfieldRequest, uploadImage as uploadHiggsfieldImage } from "../providers/higgsfield";
 import { generateFluxImage, judgeCharacterSheet, nvidiaConfigured, reviewImage } from "../providers/nvidia";
+import { VIDEO_MODELS } from "../routing/video-router";
 import { publicDirectory, repository } from "../store";
 import { createProductionWorker } from "./worker";
 
@@ -18,6 +20,7 @@ const PROVIDERS = Symbol.for("kadra.productionProviders");
 const providers = {
   deepseekConfigured, enhanceCharacterWithDeepSeek, enhanceRepairWithDeepSeek, enhanceShotsWithDeepSeek, judgeSheetWithDeepSeek, reviewImageWithDeepSeek,
   downloadMedia, getRequest, gmiConfigured, submitRequest, uploadImage,
+  downloadHiggsfieldMedia, getHiggsfieldRequest, higgsfieldConfigured, submitHiggsfieldRequest, uploadHiggsfieldImage,
   generateFluxImage, judgeCharacterSheet, nvidiaConfigured, reviewImage,
 };
 const BUILT_BY = Symbol.for("kadra.productionWorker.builtBy");
@@ -68,12 +71,22 @@ export function ensureProductionWorker(): Worker | null {
           review: (input) => { const q = live(); return q.deepseekConfigured() ? q.reviewImageWithDeepSeek(input).catch(() => q.reviewImage(input)) : q.reviewImage(input); },
         };
       },
-      videoEngine: () => live().gmiConfigured() ? {
-        upload: (image, type) => pacedUpload(image, type),
-        submit: (model, payload) => live().submitRequest(model, payload),
-        status: (requestId) => live().getRequest(requestId),
-        download: (url) => live().downloadMedia(url),
-      } : null,
+      videoEngine: (model) => {
+        const p = live();
+        const spec = VIDEO_MODELS.find((item) => item.id === model);
+        if (spec?.provider === "Higgsfield") return p.higgsfieldConfigured() ? {
+          upload: (image, type) => p.uploadHiggsfieldImage(image, type),
+          submit: (id, payload) => p.submitHiggsfieldRequest(id, payload),
+          status: (requestId) => p.getHiggsfieldRequest(requestId),
+          download: (url) => p.downloadHiggsfieldMedia(url),
+        } : null;
+        return p.gmiConfigured() ? {
+          upload: (image, type) => pacedUpload(image, type),
+          submit: (id, payload) => p.submitRequest(id, payload),
+          status: (requestId) => p.getRequest(requestId),
+          download: (url) => p.downloadMedia(url),
+        } : null;
+      },
       sheetJudge: () => {
         const p = live();
         if (p.deepseekConfigured()) return (input) => p.judgeSheetWithDeepSeek(input).catch((error) => { if (p.nvidiaConfigured()) return p.judgeCharacterSheet(input); throw error; });

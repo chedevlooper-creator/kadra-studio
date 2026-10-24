@@ -7,6 +7,7 @@ export interface VideoRequest { prompt: string; imageUrl: string; duration: numb
 export interface VideoModelSpec {
   id: string;
   label: string;
+  provider: "GMI" | "Higgsfield";
   /** Initial, unmeasured quality grade (1–4) used only to filter by tier. */
   quality: number;
   /** Model-side prompt character budget; the compiler keeps the style/negative tail inside it. */
@@ -21,25 +22,27 @@ const range = (from: number, to: number) => Array.from({ length: to - from + 1 }
 
 /** Image-to-video models whose GMI request schema has been read and mapped. Others are never routed to. */
 export const VIDEO_MODELS: VideoModelSpec[] = [
-  { id: "veo-3.1-lite-generate-001", label: "Veo 3.1 Lite", quality: 2, maxPrompt: 1_900, durations: [4, 6, 8], aspectRatios: ["16:9", "9:16"], priceKey: "720p",
+  { id: "veo-3.1-lite-generate-001", label: "Veo 3.1 Lite", provider: "GMI", quality: 2, maxPrompt: 1_900, durations: [4, 6, 8], aspectRatios: ["16:9", "9:16"], priceKey: "720p",
     payload: ({ prompt, imageUrl, duration, aspectRatio, seed }) => ({ prompt, image: imageUrl, durationSeconds: duration, aspectRatio, resolution: "720p", generateAudio: false, personGeneration: "allow_adult", seed }) },
-  { id: "Minimax-Hailuo-2.3-Fast", label: "Hailuo 2.3 Fast", quality: 2, maxPrompt: 1_900, durations: [6, 10], aspectRatios: "any", priceKey: "768p",
+  { id: "Minimax-Hailuo-2.3-Fast", label: "Hailuo 2.3 Fast", provider: "GMI", quality: 2, maxPrompt: 1_900, durations: [6, 10], aspectRatios: "any", priceKey: "768p",
     // Hailuo reads its own bracketed camera commands at the start of the prompt.
     payload: ({ prompt, imageUrl, duration, camera }) => {
       const cmd = camera ? CAMERA_MOVES.find((move) => move.id === camera)?.hailuo ?? "" : "";
       const body = cmd ? prompt.replace(/^Camera:\s*[^.]+\.\s*/i, "") : prompt;
-      return { prompt: cmd ? `${cmd} ${body}` : prompt, first_frame_image: imageUrl, duration, resolution: "768P", prompt_optimizer: true };
+      return { prompt: cmd ? `${cmd} ${body}` : prompt, first_frame_image: imageUrl, duration, resolution: "768P", prompt_optimizer: false };
     } },
-  { id: "seedance-2-0-fast-260128", label: "Seedance 2.0 Fast", quality: 2, maxPrompt: 1_900, durations: range(4, 12), aspectRatios: ["16:9", "9:16", "1:1"], priceKey: "720p",
+  { id: "seedance-2-0-fast-260128", label: "Seedance 2.0 Fast", provider: "GMI", quality: 2, maxPrompt: 1_900, durations: range(4, 12), aspectRatios: ["16:9", "9:16", "1:1"], priceKey: "720p",
     payload: ({ prompt, imageUrl, duration, aspectRatio, seed }) => ({ prompt, first_frame: imageUrl, duration, resolution: "720p", ratio: aspectRatio, generate_audio: false, watermark: false, seed }) },
-  { id: "wan2.6-i2v", label: "Wan 2.6", quality: 2, maxPrompt: 1_900, durations: [5, 10, 15], aspectRatios: "any", priceKey: "720p",
+  { id: "wan2.6-i2v", label: "Wan 2.6", provider: "GMI", quality: 2, maxPrompt: 1_900, durations: [5, 10, 15], aspectRatios: "any", priceKey: "720p",
     payload: ({ prompt, imageUrl, duration, seed }) => ({ prompt, img_url: imageUrl, resolution: "720P", duration, shot_type: "single", audio: false, watermark: false, seed }) },
-  { id: "kling-v2-5-turbo", label: "Kling 2.5 Turbo", quality: 3, maxPrompt: 1_900, durations: [5, 10], aspectRatios: "any", priceKey: "",
+  { id: "kling-v2-5-turbo", label: "Kling 2.5 Turbo", provider: "GMI", quality: 3, maxPrompt: 1_900, durations: [5, 10], aspectRatios: "any", priceKey: "",
     payload: ({ prompt, imageUrl, duration }) => ({ prompt, image: imageUrl, duration: String(duration), mode: "pro" }) },
-  { id: "veo-3.1-fast-generate-001", label: "Veo 3.1 Fast", quality: 3, maxPrompt: 1_900, durations: [4, 6, 8], aspectRatios: ["16:9", "9:16"], priceKey: "720p",
+  { id: "veo-3.1-fast-generate-001", label: "Veo 3.1 Fast", provider: "GMI", quality: 3, maxPrompt: 1_900, durations: [4, 6, 8], aspectRatios: ["16:9", "9:16"], priceKey: "720p",
     payload: ({ prompt, imageUrl, duration, aspectRatio, seed }) => ({ prompt, image: imageUrl, durationSeconds: duration, aspectRatio, resolution: "720p", generateAudio: false, personGeneration: "allow_adult", seed }) },
-  { id: "kling-v3-image-to-video", label: "Kling 3.0", quality: 4, maxPrompt: 1_900, durations: range(3, 15), aspectRatios: "any", priceKey: "",
+  { id: "kling-v3-image-to-video", label: "Kling 3.0", provider: "GMI", quality: 4, maxPrompt: 1_900, durations: range(3, 15), aspectRatios: "any", priceKey: "",
     payload: ({ prompt, imageUrl, duration }) => ({ prompt, image: imageUrl, duration: String(duration), sound: "off", mode: "std" }) },
+  { id: "hf-seedance-2.5-image-to-video", label: "Seedance 2.5 · Higgsfield (480p)", provider: "Higgsfield", quality: 2, maxPrompt: 1_900, durations: range(4, 30), aspectRatios: "any", priceKey: "480p",
+    payload: ({ prompt, imageUrl, duration }) => ({ prompt, image_url: imageUrl, duration, resolution: "480p", output_format: "mp4", generate_audio: false }) },
 ];
 
 export const TIER_MIN_QUALITY: Record<QualityTier, number> = { economy: 1, balanced: 3, best: 4 };
@@ -104,8 +107,9 @@ export function candidatesFor(duration: number, aspectRatio: AspectRatio, prices
   return VIDEO_MODELS.flatMap((model) => {
     const price = prices.get(model.id);
     if (!price || (model.aspectRatios !== "any" && !model.aspectRatios.includes(aspectRatio))) return [];
-    // The shortest clip that covers the shot; longer shots get the longest clip and hold its last frame.
-    const billedSeconds = model.durations.find((value) => value >= duration) ?? model.durations[model.durations.length - 1];
+    // Never sell a shorter generated clip and silently freeze its last frame to fill the shot.
+    const billedSeconds = model.durations.find((value) => value >= duration);
+    if (billedSeconds === undefined) return [];
     const estimate = price.perSecond !== null ? price.perSecond * billedSeconds : price.perRequest!;
     return [{ id: model.id, label: model.label, quality: model.quality, billedSeconds, estimate: round(estimate) }];
   }).sort((a, b) => a.estimate - b.estimate || b.quality - a.quality);
@@ -119,7 +123,7 @@ export function chooseVideoModel({ duration, aspectRatio, tier, override }: { du
   const all = candidatesFor(duration, aspectRatio, prices);
   if (override) {
     const chosen = all.find((candidate) => candidate.id === override);
-    if (!chosen) return { ok: false, reason: "Seçtiğin model bu çekim için şu an kullanılamıyor (kadraj oranı, durum veya fiyat bilgisi uygun değil)." };
+    if (!chosen) return { ok: false, reason: "Seçtiğin model bu çekim için şu an kullanılamıyor (süre, kadraj oranı, durum veya fiyat bilgisi uygun değil). Çekimi kısaltabilir veya başka model seçebilirsin." };
     const cheapest = all[0];
     const note = cheapest.id === chosen.id ? "Bu çekim için zaten en ucuz model." : `En ucuz seçenek ${cheapest.label} (${cheapest.estimate.toFixed(2)} $) olurdu.`;
     return { ok: true, choice: chosen, reason: `Senin seçimin. ${note}`, eligible: all };

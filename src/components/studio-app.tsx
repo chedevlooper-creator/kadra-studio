@@ -306,6 +306,7 @@ const MODEL_TYPE: Record<ModelProfile["type"], string> = { planning: "Planlama",
 function Connections({ providers, models }: { providers: ProviderStatus; models: ModelProfile[] }) {
   const services = [
     { id: "gmi", name: "GMI Cloud", ready: providers.gmi, role: "Karakter, kare ve video üretimi (ücretli)", key: "GMI_API_KEY", url: "https://docs.gmicloud.ai/inference-engine/api-reference/video-api-reference", provider: "GMI" },
+    { id: "higgsfield", name: "Higgsfield API", ready: Boolean(providers.higgsfield), role: "Seedance 2.5 ile video üretimi (ücretli)", key: "HIGGSFIELD_API_KEY", url: "https://open.higgsfield.ai/quick-start", provider: "Higgsfield" },
     { id: "deepseek", name: "DeepSeek", ready: Boolean(providers.deepseek), role: "Planlama, prompt yazımı, web araması ve kontrol", key: "DEEPSEEK_API_KEY", url: "https://api-docs.deepseek.com/", provider: "DeepSeek" },
     { id: "nvidia", name: "NVIDIA", ready: providers.nvidia, role: "Planlama ve görsel kontrolü (ücretsiz katman)", key: "NVIDIA_API_KEY", url: "https://build.nvidia.com/", provider: "NVIDIA" },
     { id: "ffmpeg", name: "FFmpeg", ready: providers.ffmpeg, role: "Kamera hareketi, ses ve montaj (bu bilgisayarda)", key: "FFMPEG_PATH", url: "https://ffmpeg.org/download.html", provider: "FFmpeg" },

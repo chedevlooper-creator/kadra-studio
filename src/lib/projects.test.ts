@@ -3,7 +3,6 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { createProjectRepository, estimateCharacters, type RepositoryOptions } from "./projects";
 import type { AiPlan } from "./providers/nvidia";
@@ -256,7 +255,7 @@ test("stale lock from dead process recovers safely", async (t) => {
 test("independent processes serialize writes without losing projects", { timeout: 20_000 }, async (t) => {
   const { directory, repository } = await fixture(t);
   await repository.getBootstrap();
-  const modulePath = fileURLToPath(new URL("./projects.ts", import.meta.url));
+  const modulePath = new URL("./projects.ts", import.meta.url).href;
   const runChild = (label: string) => new Promise<void>((resolve, reject) => {
     const source = `import {createProjectRepository} from ${JSON.stringify(modulePath)}; const repository=createProjectRepository(${JSON.stringify(directory)}); for(let i=0;i<8;i++) await repository.createProject({...${JSON.stringify(input)},title:${JSON.stringify(label)}+i});`;
     const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", source], { cwd: process.cwd(), stdio: ["ignore", "ignore", "pipe"] });

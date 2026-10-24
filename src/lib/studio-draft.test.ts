@@ -171,7 +171,7 @@ test("restoreStudioDraft validates quality tier, shotCount (1..8) and withVoiceo
     },
     fallback,
   );
-  assert.equal(invalid.quality, "economy");
+  assert.equal(invalid.quality, "best");
   assert.equal(invalid.shotCount, 1);
   assert.equal(invalid.withVoiceover, false);
 });

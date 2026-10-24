@@ -799,7 +799,7 @@ export function defaultStudioDraft(mode: CreationMode = "video", launch?: Studio
     frameModel: "",
     videoModel: "",
     multiShot: false,
-    quality: "economy",
+    quality: "best",
     shotCount: 1,
     withVoiceover: false,
   };
